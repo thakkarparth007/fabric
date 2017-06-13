@@ -17,10 +17,13 @@ limitations under the License.
 package broadcast
 
 import (
+	"fmt"
 	"github.com/hyperledger/fabric/orderer/common/filter"
 	cb "github.com/hyperledger/fabric/protos/common"
 	ab "github.com/hyperledger/fabric/protos/orderer"
 	"github.com/op/go-logging"
+	"os"
+	"time"
 
 	"io"
 
@@ -29,6 +32,7 @@ import (
 )
 
 var logger = logging.MustGetLogger("orderer/common/broadcast")
+var f, _ = os.Create("broadcast.EnqueDelay.log")
 
 // ConfigUpdateProcessor is used to transform CONFIG_UPDATE transactions which are used to generate other envelope
 // message types with preprocessing by the orderer
@@ -138,14 +142,22 @@ func (bh *handlerImpl) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 		logger.Debugf("[channel: %s] Broadcast is filtering message of type %s", chdr.ChannelId, cb.HeaderType_name[chdr.Type])
 
 		// Normal transaction for existing chain
+		myt := time.Now()
+		fmt.Fprintf(f, "%s BEFORE support.Filters().Apply(msg)\n", myt)
 		_, filterErr := support.Filters().Apply(msg)
+		fmt.Fprintf(f, "%s AFTER support.Filters().Apply(msg). DIFF: %s\n", time.Now(), time.Now().Sub(myt))
 
 		if filterErr != nil {
 			logger.Warningf("[channel: %s] Rejecting broadcast message because of filter error: %s", chdr.ChannelId, filterErr)
 			return srv.Send(&ab.BroadcastResponse{Status: cb.Status_BAD_REQUEST})
 		}
 
-		if !support.Enqueue(msg) {
+		myt = time.Now()
+		fmt.Fprintf(f, "%s BEFORE support.Enqueue(msg)\n", myt)
+		success := support.Enqueue(msg)
+		fmt.Fprintf(f, "%s AFTER support.Enqueue(msg). DIFF: %s\n", time.Now(), time.Now().Sub(myt))
+		if !success {
+			logger.Infof("Consenter instructed us to shut down")
 			return srv.Send(&ab.BroadcastResponse{Status: cb.Status_SERVICE_UNAVAILABLE})
 		}
 

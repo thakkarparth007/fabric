@@ -17,6 +17,8 @@ limitations under the License.
 package solo
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/hyperledger/fabric/orderer/multichain"
@@ -87,9 +89,13 @@ func (ch *chain) Errored() <-chan struct{} {
 func (ch *chain) main() {
 	var timer <-chan time.Time
 
+	f, _ := os.Create("transIncoming.BlockOutgoing.log")
+
 	for {
 		select {
 		case msg := <-ch.sendChan:
+			fmt.Fprintf(f, "%s Got transaction\n", time.Now())
+
 			batches, committers, ok := ch.support.BlockCutter().Ordered(msg)
 			if ok && len(batches) == 0 && timer == nil {
 				timer = time.After(ch.batchTimeout)
@@ -97,7 +103,9 @@ func (ch *chain) main() {
 			}
 			for i, batch := range batches {
 				block := ch.support.CreateNextBlock(batch)
+				myt := time.Now()
 				ch.support.WriteBlock(block, committers[i], nil)
+				fmt.Fprintf(f, "%s Sent block %f\n", time.Now(), time.Now().Sub(myt).Seconds())
 			}
 			if len(batches) > 0 {
 				timer = nil
@@ -113,7 +121,9 @@ func (ch *chain) main() {
 			}
 			logger.Debugf("Batch timer expired, creating block")
 			block := ch.support.CreateNextBlock(batch)
+			myt := time.Now()
 			ch.support.WriteBlock(block, committers, nil)
+			fmt.Fprintf(f, "%s Sent block %f\n", time.Now(), time.Now().Sub(myt).Seconds())
 		case <-ch.exitChan:
 			logger.Debugf("Exiting")
 			return
