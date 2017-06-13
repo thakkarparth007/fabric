@@ -29,6 +29,7 @@ import (
 )
 
 var cauthdslLogger = flogging.MustGetLogger("cauthdsl")
+var deserializedIdentites = make(map[string]msp.Identity)
 
 // compile recursively builds a go evaluatable function corresponding to the policy specified
 func compile(policy *cb.SignaturePolicy, identities []*mb.MSPPrincipal, deserializer msp.IdentityDeserializer) (func([]*cb.SignedData, []bool) bool, error) {
@@ -56,6 +57,9 @@ func compile(policy *cb.SignaturePolicy, identities []*mb.MSPPrincipal, deserial
 				copy(_used, used)
 				if policy(signedData, _used) {
 					verified++
+					if verified >= t.NOutOf.N {
+						break
+					}
 					copy(used, _used)
 				}
 			}
@@ -80,15 +84,19 @@ func compile(policy *cb.SignaturePolicy, identities []*mb.MSPPrincipal, deserial
 					cauthdslLogger.Debugf("%p skipping identity %d because it has already been used", signedData, i)
 					continue
 				}
-				if cauthdslLogger.IsEnabledFor(logging.DEBUG) {
-					// Unlike most places, this is a huge print statement, and worth checking log level before create garbage
-					cauthdslLogger.Debugf("%p processing identity %d with bytes of %x", signedData, i, sd.Identity)
+				strID := string(sd.Identity)
+				var identity msp.Identity
+				var err error
+				identity, ok := deserializedIdentites[strID]
+				if !ok {
+					identity, err = deserializer.DeserializeIdentity(sd.Identity)
+					if err != nil {
+						cauthdslLogger.Errorf("Principal deserialization failed: (%s) for identity %v", err, sd.Identity)
+						continue
+					}
+					deserializedIdentites[strID] = identity
 				}
-				identity, err := deserializer.DeserializeIdentity(sd.Identity)
-				if err != nil {
-					cauthdslLogger.Errorf("Principal deserialization failure (%s) for identity %x", err, sd.Identity)
-					continue
-				}
+
 				err = identity.SatisfiesPrincipal(signedByID)
 				if err != nil {
 					cauthdslLogger.Debugf("%p identity %d does not satisfy principal: %s", signedData, i, err)
