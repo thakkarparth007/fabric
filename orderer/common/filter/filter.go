@@ -18,7 +18,6 @@ package filter
 
 import (
 	"fmt"
-	"sync"
 
 	ab "github.com/hyperledger/fabric/protos/common"
 )
@@ -94,26 +93,8 @@ func NewRuleSet(rules []Rule) *RuleSet {
 
 // Apply applies the rules given for this set in order, returning the committer, nil on valid, or nil, err on invalid
 func (rs *RuleSet) Apply(message *ab.Envelope) (Committer, error) {
-	var wg sync.WaitGroup
-	actions := make([]Action, len(rs.rules))
-	committers := make([]Commiter, len(rs.rules))
-
-	for i, rule := range rs.rules {
-		wg.Add(1)
-		go func() {
-			action, committer := rule.Apply(message)
-			actions[i] = action
-			committers[i] = committer
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()
-
-	for i, rule := range rs.rules {
-		action := actions[i]
-		committer := committers[i]
-
+	for _, rule := range rs.rules {
+		action, committer := rule.Apply(message)
 		switch action {
 		case Accept:
 			return committer, nil
