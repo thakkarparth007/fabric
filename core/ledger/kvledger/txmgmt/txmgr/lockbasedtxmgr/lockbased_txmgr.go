@@ -17,10 +17,8 @@ limitations under the License.
 package lockbasedtxmgr
 
 import (
-	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
@@ -64,7 +62,7 @@ func (txmgr *LockBasedTxMgr) GetLastSavepoint() (*version.Height, error) {
 func (txmgr *LockBasedTxMgr) NewQueryExecutor() (ledger.QueryExecutor, error) {
 	qe := newQueryExecutor(txmgr)
 
-	tmpLogFileLock.Lock()
+	/*tmpLogFileLock.Lock()
 	blockedReaders++
 	fmt.Fprintf(tmpLogFile, "%s Acquiring Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
@@ -75,7 +73,7 @@ func (txmgr *LockBasedTxMgr) NewQueryExecutor() (ledger.QueryExecutor, error) {
 	blockedReaders--
 	blockingReaders++
 	fmt.Fprintf(tmpLogFile, "%s Rlock acquired. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
-	tmpLogFileLock.Unlock()
+	tmpLogFileLock.Unlock()*/
 
 	return qe, nil
 }
@@ -85,7 +83,7 @@ func (txmgr *LockBasedTxMgr) NewTxSimulator() (ledger.TxSimulator, error) {
 	logger.Debugf("constructing new tx simulator")
 	s := newLockBasedTxSimulator(txmgr)
 
-	tmpLogFileLock.Lock()
+	/*tmpLogFileLock.Lock()
 	blockedReaders++
 	fmt.Fprintf(tmpLogFile, "%s Acquiring Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
@@ -95,7 +93,7 @@ func (txmgr *LockBasedTxMgr) NewTxSimulator() (ledger.TxSimulator, error) {
 	blockedReaders--
 	blockingReaders++
 	fmt.Fprintf(tmpLogFile, "%s Rlock acquired. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
-	tmpLogFileLock.Unlock()
+	tmpLogFileLock.Unlock()*/
 
 	return s, nil
 }
@@ -121,7 +119,7 @@ func (txmgr *LockBasedTxMgr) Shutdown() {
 func (txmgr *LockBasedTxMgr) Commit() error {
 	logger.Debugf("Committing updates to state database")
 
-	tmpLogFileLock.Lock()
+	/*tmpLogFileLock.Lock()
 	blockedWriters++
 	fmt.Fprintf(tmpLogFile, "%s Acquiring Lock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
@@ -139,7 +137,7 @@ func (txmgr *LockBasedTxMgr) Commit() error {
 		tmpLogFileLock.Unlock()
 	}()
 
-	defer txmgr.commitRWLock.Unlock()
+	defer txmgr.commitRWLock.Unlock()*/
 	logger.Debugf("Write lock acquired for committing updates to state database")
 	if txmgr.batch == nil {
 		panic("validateAndPrepare() method should have been called before calling commit()")

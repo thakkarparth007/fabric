@@ -17,9 +17,6 @@ limitations under the License.
 package lockbasedtxmgr
 
 import (
-	"fmt"
-	"time"
-
 	commonledger "github.com/hyperledger/fabric/common/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
@@ -92,12 +89,12 @@ func (h *queryHelper) done() {
 	}
 
 	defer func() {
-		h.txmgr.commitRWLock.RUnlock()
+		/*h.txmgr.commitRWLock.RUnlock()
 
 		tmpLogFileLock.Lock()
 		blockingReaders--
 		fmt.Fprintf(tmpLogFile, "%s Released Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
-		tmpLogFileLock.Unlock()
+		tmpLogFileLock.Unlock()*/
 
 		h.doneInvoked = true
 		for _, itr := range h.itrs {
