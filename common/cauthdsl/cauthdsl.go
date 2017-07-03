@@ -24,8 +24,6 @@ import (
 	"github.com/hyperledger/fabric/msp"
 	cb "github.com/hyperledger/fabric/protos/common"
 	mb "github.com/hyperledger/fabric/protos/msp"
-
-	"github.com/op/go-logging"
 )
 
 var cauthdslLogger = flogging.MustGetLogger("cauthdsl")
