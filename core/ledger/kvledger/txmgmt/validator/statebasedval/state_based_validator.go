@@ -17,6 +17,11 @@ limitations under the License.
 package statebasedval
 
 import (
+	"os"
+	"time"
+
+	"fmt"
+
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
@@ -27,6 +32,8 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 	putils "github.com/hyperledger/fabric/protos/utils"
 )
+
+var state_based_validator_log, _ = os.Create("/root/state_based_validator.log")
 
 var logger = flogging.MustGetLogger("statevalidator")
 
@@ -75,6 +82,10 @@ func (v *Validator) validateEndorserTX(envBytes []byte, doMVCCValidation bool, u
 
 // ValidateAndPrepareBatch implements method in Validator interface
 func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidation bool) (*statedb.UpdateBatch, error) {
+	startTime := time.Now()
+	state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatch start\n", startTime))
+	defer state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatch end %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
+
 	logger.Debugf("New block arrived for validation:%#v, doMVCCValidation=%t", block, doMVCCValidation)
 	updates := statedb.NewUpdateBatch()
 	logger.Debugf("Validating a block with [%d] transactions", len(block.Data.Data))
@@ -96,7 +107,9 @@ func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidatio
 			continue
 		}
 
+		sTime := time.Now()
 		env, err := putils.GetEnvelopeFromBlock(envBytes)
+		state_based_validator_log.WriteString(fmt.Sprintf("%s GetEnvelopeFromBlock done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +132,9 @@ func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidatio
 			continue
 		}
 
+		sTime = time.Now()
 		txRWSet, txResult, err := v.validateEndorserTX(envBytes, doMVCCValidation, updates)
+		state_based_validator_log.WriteString(fmt.Sprintf("%s validateEndorserTX done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 
 		if err != nil {
 			return nil, err
@@ -130,7 +145,9 @@ func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidatio
 		//txRWSet != nil => t is valid
 		if txRWSet != nil {
 			committingTxHeight := version.NewHeight(block.Header.Number, uint64(txIndex))
+			sTime = time.Now()
 			addWriteSetToBatch(txRWSet, committingTxHeight, updates)
+			state_based_validator_log.WriteString(fmt.Sprintf("%s addWriteSetToBatch done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 			txsFilter.SetFlag(txIndex, peer.TxValidationCode_VALID)
 		}
 

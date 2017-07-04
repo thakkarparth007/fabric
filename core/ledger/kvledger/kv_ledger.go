@@ -19,6 +19,8 @@ package kvledger
 import (
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	commonledger "github.com/hyperledger/fabric/common/ledger"
@@ -33,6 +35,7 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 )
 
+var kvledger_log, _ = os.Create("/root/kvledger.log")
 var logger = flogging.MustGetLogger("kvledger")
 
 // KVLedger provides an implementation of `ledger.PeerLedger`.
@@ -213,26 +216,38 @@ func (l *kvLedger) Commit(block *common.Block) error {
 	blockNo := block.Header.Number
 
 	logger.Debugf("Channel [%s]: Validating block [%d]", l.ledgerID, blockNo)
+
+	startTime := time.Now()
 	err = l.txtmgmt.ValidateAndPrepare(block, true)
+	kvledger_log.WriteString(fmt.Sprintf("%s ValidateAndPrepare done %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
 	if err != nil {
 		return err
 	}
 
 	logger.Debugf("Channel [%s]: Committing block [%d] to storage", l.ledgerID, blockNo)
-	if err = l.blockStore.AddBlock(block); err != nil {
+	startTime = time.Now()
+	err = l.blockStore.AddBlock(block)
+	kvledger_log.WriteString(fmt.Sprintf("%s AddBlock done (disk) %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
+	if err != nil {
 		return err
 	}
 	logger.Infof("Channel [%s]: Created block [%d] with %d transaction(s)", l.ledgerID, block.Header.Number, len(block.Data.Data))
 
 	logger.Debugf("Channel [%s]: Committing block [%d] transactions to state database", l.ledgerID, blockNo)
-	if err = l.txtmgmt.Commit(); err != nil {
+	startTime = time.Now()
+	err = l.txtmgmt.Commit()
+	kvledger_log.WriteString(fmt.Sprintf("%s StateDB.Commit() done %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
+	if err != nil {
 		panic(fmt.Errorf(`Error during commit to txmgr:%s`, err))
 	}
 
 	// History database could be written in parallel with state and/or async as a future optimization
 	if ledgerconfig.IsHistoryDBEnabled() {
 		logger.Debugf("Channel [%s]: Committing block [%d] transactions to history database", l.ledgerID, blockNo)
-		if err := l.historyDB.Commit(block); err != nil {
+		startTime = time.Now()
+		err := l.historyDB.Commit(block)
+		kvledger_log.WriteString(fmt.Sprintf("%s HistoryDB.Commit() done %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
+		if err != nil {
 			panic(fmt.Errorf(`Error during commit to history db:%s`, err))
 		}
 	}
