@@ -8,6 +8,8 @@ package endorser
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -31,6 +33,8 @@ import (
 	pb "github.com/hyperledger/fabric/protos/peer"
 	putils "github.com/hyperledger/fabric/protos/utils"
 )
+
+var endorser_log, _ = os.Create("/root/endorser.log")
 
 // >>>>> begin errors section >>>>>
 //chaincodeError is a fabric error signifying error from chaincode
@@ -362,10 +366,16 @@ func (e *Endorser) endorseProposal(ctx context.Context, chainID string, txid str
 
 // ProcessProposal process the Proposal
 func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedProposal) (*pb.ProposalResponse, error) {
+	startTime := time.Now()
+	endorser_log.WriteString(fmt.Sprintf("%s ProcessProposal start\n", startTime))
+	defer endorser_log.WriteString(fmt.Sprintf("%s ProcessProposal done %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
+
 	endorserLogger.Debugf("Entry")
 	defer endorserLogger.Debugf("Exit")
 	// at first, we check whether the message is valid
+	sTime := time.Now()
 	prop, hdr, hdrExt, err := validation.ValidateProposalMessage(signedProp)
+	endorser_log.WriteString(fmt.Sprintf("%s ValidateProposalMessage done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 	if err != nil {
 		return &pb.ProposalResponse{Response: &pb.Response{Status: 500, Message: err.Error()}}, err
 	}
@@ -413,7 +423,10 @@ func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedPro
 		// for system chaincodes are checked elsewhere
 		if !syscc.IsSysCC(hdrExt.ChaincodeId.Name) {
 			// check that the proposal complies with the channel's writers
-			if err = e.checkACL(signedProp, chdr, shdr, hdrExt); err != nil {
+			sTime = time.Now()
+			err = e.checkACL(signedProp, chdr, shdr, hdrExt)
+			endorser_log.WriteString(fmt.Sprintf("%s checkACL done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+			if err != nil {
 				return &pb.ProposalResponse{Response: &pb.Response{Status: 500, Message: err.Error()}}, err
 			}
 		}
@@ -451,7 +464,10 @@ func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedPro
 	//       to validate the supplied action before endorsing it
 
 	//1 -- simulate
+	sTime = time.Now()
 	cd, res, simulationResult, ccevent, err := e.simulateProposal(ctx, chainID, txid, signedProp, prop, hdrExt.ChaincodeId, txsim)
+	endorser_log.WriteString(fmt.Sprintf("%s simulateProposal done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+
 	if err != nil {
 		return &pb.ProposalResponse{Response: &pb.Response{Status: 500, Message: err.Error()}}, err
 	}
@@ -482,7 +498,9 @@ func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedPro
 	if chainID == "" {
 		pResp = &pb.ProposalResponse{Response: res}
 	} else {
+		sTime = time.Now()
 		pResp, err = e.endorseProposal(ctx, chainID, txid, signedProp, prop, res, simulationResult, ccevent, hdrExt.PayloadVisibility, hdrExt.ChaincodeId, txsim, cd)
+		endorser_log.WriteString(fmt.Sprintf("%s endorseProposal done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 		if err != nil {
 			return &pb.ProposalResponse{Response: &pb.Response{Status: 500, Message: err.Error()}}, err
 		}

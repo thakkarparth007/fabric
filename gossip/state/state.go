@@ -19,6 +19,8 @@ package state
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +36,8 @@ import (
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/op/go-logging"
 )
+
+var gossip_state_log, _ = os.Create("/root/gossip_state.log")
 
 // GossipStateProvider is the interface to acquire sequences of the ledger blocks
 // capable to full fill missing blocks by running state replication and
@@ -416,10 +420,24 @@ func (s *GossipStateProviderImpl) queueNewMessage(msg *proto.GossipMessage) {
 func (s *GossipStateProviderImpl) deliverPayloads() {
 	defer s.done.Done()
 
+	mychan := make(chan struct{})
+	var readyTime time.Time
+
+	go func() {
+		for {
+			<-s.payloads.Ready()
+			readyTime = time.Now()
+			gossip_state_log.WriteString(fmt.Sprintf("%s Ready!\n", readyTime.String()))
+			mychan <- struct{}{}
+		}
+	}()
+
 	for {
 		select {
 		// Wait for notification that next seq has arrived
-		case <-s.payloads.Ready():
+		case <-mychan:
+			consumeTime := time.Now()
+			gossip_state_log.WriteString(fmt.Sprintf("%s Consumed. Diff = %d\n", consumeTime, consumeTime.Sub(readyTime).Nanoseconds()))
 			logger.Debugf("Ready to transfer payloads to the ledger, next sequence number is = [%d]", s.payloads.Next())
 			// Collect all subsequent payloads
 			for payload := s.payloads.Pop(); payload != nil; payload = s.payloads.Pop() {
@@ -434,8 +452,11 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 					continue
 				}
 				logger.Debug("New block with claimed sequence number ", payload.SeqNum, " transactions num ", len(rawBlock.Data.Data))
+				sTime := time.Now()
 				s.commitBlock(rawBlock)
+				gossip_state_log.WriteString(fmt.Sprintf("%s Commit duration %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 			}
+			gossip_state_log.WriteString(fmt.Sprintf("%s Loop over %d\n", time.Now(), time.Now().Sub(consumeTime).Nanoseconds()))
 		case <-s.stopCh:
 			s.stopCh <- struct{}{}
 			logger.Debug("State provider has been stoped, finishing to push new blocks.")

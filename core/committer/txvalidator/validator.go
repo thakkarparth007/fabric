@@ -18,6 +18,8 @@ package txvalidator
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/configtx"
@@ -39,6 +41,8 @@ import (
 	"github.com/hyperledger/fabric/common/cauthdsl"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 )
+
+var txvalidator_log, _ = os.Create("/root/txvalidator.log")
 
 // Support provides all of the needed to evaluate the VSCC
 type Support interface {
@@ -111,6 +115,11 @@ func (v *txValidator) chainExists(chain string) bool {
 func (v *txValidator) Validate(block *common.Block) error {
 	logger.Debug("START Block Validation")
 	defer logger.Debug("END Block Validation")
+
+	startTime := time.Now()
+	txvalidator_log.WriteString(fmt.Sprintf("%s Signature validation starts\n", startTime))
+	defer txvalidator_log.WriteString(fmt.Sprintf("%s Signature validation ends %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
+
 	// Initialize trans as valid here, then set invalidation reason code upon invalidation below
 	txsfltr := ledgerUtil.NewTxValidationFlags(len(block.Data.Data))
 	// txsChaincodeNames records all the invoked chaincodes by tx in a block
@@ -133,11 +142,14 @@ func (v *txValidator) Validate(block *common.Block) error {
 				var err error
 				var txResult peer.TxValidationCode
 
+				sTime := time.Now()
 				if payload, txResult = validation.ValidateTransaction(env); txResult != peer.TxValidationCode_VALID {
+					txvalidator_log.WriteString(fmt.Sprintf("%s ValidateTransaction failed %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
 					logger.Errorf("Invalid transaction with index %d", tIdx)
 					txsfltr.SetFlag(tIdx, txResult)
 					continue
 				}
+				txvalidator_log.WriteString(fmt.Sprintf("%s ValidateTransaction done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 
 				chdr, err := utils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
 				if err != nil {
@@ -158,15 +170,20 @@ func (v *txValidator) Validate(block *common.Block) error {
 				if common.HeaderType(chdr.Type) == common.HeaderType_ENDORSER_TRANSACTION {
 					// Check duplicate transactions
 					txID := chdr.TxId
+					sTime := time.Now()
 					if _, err := v.support.Ledger().GetTransactionByID(txID); err == nil {
+						txvalidator_log.WriteString(fmt.Sprintf("%s GetTransactionById failed %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
 						logger.Error("Duplicate transaction found, ", txID, ", skipping")
 						txsfltr.SetFlag(tIdx, peer.TxValidationCode_DUPLICATE_TXID)
 						continue
 					}
+					txvalidator_log.WriteString(fmt.Sprintf("%s GetTransactionById done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 
 					// Validate tx with vscc and policy
 					logger.Debug("Validating transaction vscc tx validate")
+					sTime = time.Now()
 					err, cde := v.vscc.VSCCValidateTx(payload, d, env)
+					txvalidator_log.WriteString(fmt.Sprintf("%s VSCCValidateTx done %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
 					if err != nil {
 						txID := txID
 						logger.Errorf("VSCCValidateTx for transaction txId = %s returned error %s", txID, err)

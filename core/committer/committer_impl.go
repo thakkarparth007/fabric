@@ -18,6 +18,8 @@ package committer
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/committer/txvalidator"
@@ -27,6 +29,8 @@ import (
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/op/go-logging"
 )
+
+var committer_log, _ = os.Create("/root/committer.log")
 
 //--------!!!IMPORTANT!!-!!IMPORTANT!!-!!IMPORTANT!!---------
 // This is used merely to complete the loop for the "skeleton"
@@ -68,12 +72,15 @@ func NewLedgerCommitterReactive(ledger ledger.PeerLedger, validator txvalidator.
 // Commit commits block to into the ledger
 // Note, it is important that this always be called serially
 func (lc *LedgerCommitter) Commit(block *common.Block) error {
-
+	startTime := time.Now()
+	//committer_log.WriteString(fmt.Sprintf("%s Validating signatures", startTime))
 	// Validate and mark invalid transactions
 	logger.Debug("Validating block")
 	if err := lc.validator.Validate(block); err != nil {
+		committer_log.WriteString(fmt.Sprintf("%s Validate failed %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
 		return err
 	}
+	committer_log.WriteString(fmt.Sprintf("%s Validated %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
 
 	// Updating CSCC with new configuration block
 	if utils.IsConfigBlock(block) {
@@ -83,9 +90,13 @@ func (lc *LedgerCommitter) Commit(block *common.Block) error {
 		}
 	}
 
+	startTime = time.Now()
+	//committer_log.WriteString(fmt.Sprintf("%s Before commit\n", startTime))
 	if err := lc.ledger.Commit(block); err != nil {
+		committer_log.WriteString(fmt.Sprintf("%s Commit failed %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
 		return err
 	}
+	committer_log.WriteString(fmt.Sprintf("%s Committed %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
 
 	// send block event *after* the block has been committed
 	if err := producer.SendProducerBlockEvent(block); err != nil {
