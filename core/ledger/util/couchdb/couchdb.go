@@ -31,6 +31,7 @@ import (
 	"net/http/httputil"
 	"net/textproto"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ import (
 )
 
 var logger = flogging.MustGetLogger("couchdb")
+var couchdb_log, _ = os.Create("/root/couchdb.log")
 
 //time between retry attempts in milliseconds
 const retryWaitTime = 125
@@ -1213,6 +1215,12 @@ func (dbclient *CouchDatabase) handleRequestWithRevisionRetry(id, method string,
 func (couchInstance *CouchInstance) handleRequest(method, connectURL string, data []byte, rev string,
 	multipartBoundary string, maxRetries int, keepConnectionOpen bool) (*http.Response, *DBReturn, error) {
 
+	startTime := time.Now()
+	defer func() {
+		couchdb_log.WriteString(fmt.Sprintf("Time: %d handleRequest(%s,%s,datalen-%d,%s,%s,max-retry:%d,connection-open:%t",
+			time.Now().Sub(startTime).Nanoseconds(), method, connectURL, len(data), rev, multipartBoundary, maxRetries,
+			keepConnectionOpen))
+	}()
 	logger.Debugf("Entering handleRequest()  method=%s  url=%v", method, connectURL)
 
 	//create the return objects for couchDB
