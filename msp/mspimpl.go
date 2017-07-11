@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -29,6 +30,26 @@ import (
 // This is an instantiation of an MSP that
 // uses BCCSP for its cryptographic primitives.
 type bccspmsp struct {
+	// cache for DeserializeIdentity.
+	deserializeIdentityCache struct {
+		sync.RWMutex
+		m map[string]Identity
+	}
+
+	// HACKY IMPLEMENATION. POLISHING REQUIRED!
+	// basically a map of principals=>identities=>stringified to booleans
+	// specifying whether this identity satisfies this principal
+	// Ideally this should be a part of the principal.
+	// Principal should tell whether an identity belongs
+	// to it or not.
+	satisfiesPrincipalCache struct {
+		sync.RWMutex
+		m map[string]struct {
+			sync.RWMutex
+			m map[string]bool
+		}
+	}
+
 	// list of CA certs we trust
 	rootCerts []Identity
 
@@ -82,6 +103,12 @@ func NewBccspMsp() (MSP, error) {
 	bccsp := factory.GetDefault()
 	theMsp := &bccspmsp{}
 	theMsp.bccsp = bccsp
+
+	theMsp.deserializeIdentityCache.m = make(map[string]Identity)
+	theMsp.satisfiesPrincipalCache.m = make(map[string]struct {
+		sync.RWMutex
+		m map[string]bool
+	})
 
 	return theMsp, nil
 }
@@ -422,6 +449,13 @@ func (msp *bccspmsp) DeserializeIdentity(serializedID []byte) (Identity, error) 
 
 // deserializeIdentityInternal returns an identity given its byte-level representation
 func (msp *bccspmsp) deserializeIdentityInternal(serializedIdentity []byte) (Identity, error) {
+	msp.deserializeIdentityCache.RLock()
+	myid, ok := msp.deserializeIdentityCache.m[string(serializedIdentity)]
+	msp.deserializeIdentityCache.RUnlock()
+	if ok {
+		return myid, nil
+	}
+
 	// This MSP will always deserialize certs this way
 	bl, _ := pem.Decode(serializedIdentity)
 	if bl == nil {
@@ -459,11 +493,45 @@ func (msp *bccspmsp) deserializeIdentityInternal(serializedIdentity []byte) (Ide
 		return nil, fmt.Errorf("Failed to import certitifacate's public key [%s]", err)
 	}
 
-	return newIdentity(id, cert, pub, msp)
+	myid, err = newIdentity(id, cert, pub, msp)
+	if err == nil {
+		msp.deserializeIdentityCache.Lock()
+		msp.deserializeIdentityCache.m[string(serializedIdentity)] = myid
+		msp.deserializeIdentityCache.Unlock()
+	}
+	return myid, err
 }
 
 // SatisfiesPrincipal returns null if the identity matches the principal or an error otherwise
 func (msp *bccspmsp) SatisfiesPrincipal(id Identity, principal *m.MSPPrincipal) error {
+	// a helper function
+	getStrIdentifier := func(id Identity) string {
+		idIdentifier := id.GetIdentifier()
+		return idIdentifier.Mspid + ":" + idIdentifier.Id
+	}
+
+	msp.satisfiesPrincipalCache.RLock()
+	idmap, ok := msp.satisfiesPrincipalCache.m[string(principal.Principal)]
+	msp.satisfiesPrincipalCache.RUnlock()
+	if ok {
+		idmap.RLock()
+		satisfies, ok := idmap.m[getStrIdentifier(id)]
+		idmap.RUnlock()
+		if ok {
+			if satisfies {
+				return nil
+			}
+			return fmt.Errorf("Identity does not satisfy this principal")
+		}
+	} else {
+		msp.satisfiesPrincipalCache.Lock()
+		msp.satisfiesPrincipalCache.m = make(map[string]struct {
+			sync.RWMutex
+			m map[string]bool
+		})
+		msp.satisfiesPrincipalCache.Unlock()
+	}
+
 	switch principal.PrincipalClassification {
 	// in this case, we have to check whether the
 	// identity has a role in the msp - member or admin
@@ -487,20 +555,43 @@ func (msp *bccspmsp) SatisfiesPrincipal(id Identity, principal *m.MSPPrincipal) 
 			// in the case of member, we simply check
 			// whether this identity is valid for the MSP
 			mspLogger.Debugf("Checking if identity satisfies MEMBER role for %s", msp.name)
-			return msp.Validate(id)
+
+			err = msp.Validate(id)
+
+			msp.satisfiesPrincipalCache.Lock()
+			idmap, _ := msp.satisfiesPrincipalCache.m[string(principal.Principal)]
+			idmap.Lock()
+			idmap.m[getStrIdentifier(id)] = (err == nil)
+			idmap.Unlock()
+			msp.satisfiesPrincipalCache.Unlock()
+			return err
+
 		case m.MSPRole_ADMIN:
 			mspLogger.Debugf("Checking if identity satisfies ADMIN role for %s", msp.name)
 			// in the case of admin, we check that the
 			// id is exactly one of our admins
+
+			isAdmin := false
 			for _, admincert := range msp.admins {
 				if bytes.Equal(id.(*identity).cert.Raw, admincert.(*identity).cert.Raw) {
 					// we do not need to check whether the admin is a valid identity
 					// according to this MSP, since we already check this at Setup time
 					// if there is a match, we can just return
-					return nil
+					isAdmin = true
+					break
 				}
 			}
 
+			msp.satisfiesPrincipalCache.Lock()
+			idmap, _ := msp.satisfiesPrincipalCache.m[string(principal.Principal)]
+			idmap.Lock()
+			idmap.m[getStrIdentifier(id)] = isAdmin
+			idmap.Unlock()
+			msp.satisfiesPrincipalCache.Unlock()
+
+			if isAdmin {
+				return nil
+			}
 			return errors.New("This identity is not an admin")
 		default:
 			return fmt.Errorf("Invalid MSP role type %d", int32(mspRole.Role))
