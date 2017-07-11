@@ -44,7 +44,7 @@ type bccspmsp struct {
 	// to it or not.
 	satisfiesPrincipalCache struct {
 		sync.RWMutex
-		m map[string]struct {
+		m map[string]*struct {
 			sync.RWMutex
 			m map[string]bool
 		}
@@ -105,7 +105,7 @@ func NewBccspMsp() (MSP, error) {
 	theMsp.bccsp = bccsp
 
 	theMsp.deserializeIdentityCache.m = make(map[string]Identity)
-	theMsp.satisfiesPrincipalCache.m = make(map[string]struct {
+	theMsp.satisfiesPrincipalCache.m = make(map[string]*struct {
 		sync.RWMutex
 		m map[string]bool
 	})
@@ -525,10 +525,14 @@ func (msp *bccspmsp) SatisfiesPrincipal(id Identity, principal *m.MSPPrincipal) 
 		}
 	} else {
 		msp.satisfiesPrincipalCache.Lock()
-		msp.satisfiesPrincipalCache.m = make(map[string]struct {
+		// horrible looking code. yes.
+		msp.satisfiesPrincipalCache.m[string(principal.Principal)] = &struct {
 			sync.RWMutex
 			m map[string]bool
-		})
+		}{
+			sync.RWMutex{},
+			make(map[string]bool),
+		}
 		msp.satisfiesPrincipalCache.Unlock()
 	}
 
