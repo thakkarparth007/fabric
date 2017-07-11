@@ -1217,7 +1217,7 @@ func (couchInstance *CouchInstance) handleRequest(method, connectURL string, dat
 
 	startTime := time.Now()
 	defer func() {
-		couchdb_log.WriteString(fmt.Sprintf("Time: %d handleRequest(%s,%s,datalen-%d,%s,%s,max-retry:%d,connection-open:%t",
+		couchdb_log.WriteString(fmt.Sprintf("Time: %d handleRequest(%s,%s,datalen-%d,%s,%s,max-retry:%d,connection-open:%t\n",
 			time.Now().Sub(startTime).Nanoseconds(), method, connectURL, len(data), rev, multipartBoundary, maxRetries,
 			keepConnectionOpen))
 	}()

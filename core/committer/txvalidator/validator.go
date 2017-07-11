@@ -586,7 +586,9 @@ func (v *vsccValidatorImpl) VSCCValidateTxForCC(envBytes []byte, txid, chid, vsc
 
 	// invoke VSCC
 	logger.Debug("Invoking VSCC txid", txid, "chaindID", chid)
+	startTime := time.Now()
 	res, _, err := v.ccprovider.ExecuteChaincode(ctxt, cccid, args)
+	txvalidator_log.WriteString(fmt.Sprintf("%s RealVSCC done %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
 	if err != nil {
 		logger.Errorf("Invoke VSCC failed for transaction txid=%s, error %s", txid, err)
 		return err
