@@ -82,17 +82,11 @@ func compile(policy *cb.SignaturePolicy, identities []*mb.MSPPrincipal, deserial
 					cauthdslLogger.Debugf("%p skipping identity %d because it has already been used", signedData, i)
 					continue
 				}
-				strID := string(sd.Identity)
-				var identity msp.Identity
-				var err error
-				identity, ok := deserializedIdentites[strID]
-				if !ok {
-					identity, err = deserializer.DeserializeIdentity(sd.Identity)
-					if err != nil {
-						cauthdslLogger.Errorf("Principal deserialization failed: (%s) for identity %v", err, sd.Identity)
-						continue
-					}
-					deserializedIdentites[strID] = identity
+
+				identity, err := deserializer.DeserializeIdentity(sd.Identity)
+				if err != nil {
+					cauthdslLogger.Errorf("Principal deserialization failed: (%s) for identity %v", err, sd.Identity)
+					continue
 				}
 
 				err = identity.SatisfiesPrincipal(signedByID)
