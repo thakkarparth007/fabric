@@ -36,6 +36,12 @@ type bccspmsp struct {
 		m map[string]Identity
 	}
 
+	// cache for validateIdentity
+	validateIdentityCache struct {
+		sync.RWMutex
+		m map[string]bool
+	}
+
 	// HACKY IMPLEMENATION. POLISHING REQUIRED!
 	// basically a map of principals=>identities=>stringified to booleans
 	// specifying whether this identity satisfies this principal
@@ -109,6 +115,7 @@ func NewBccspMsp() (MSP, error) {
 		sync.RWMutex
 		m map[string]bool
 	})
+	theMsp.validateIdentityCache.m = make(map[string]bool)
 
 	return theMsp, nil
 }
@@ -1100,6 +1107,13 @@ func (msp *bccspmsp) sanitizeCert(cert *x509.Certificate) (*x509.Certificate, er
 }
 
 func (msp *bccspmsp) validateIdentity(id *identity) error {
+	msp.validateIdentityCache.RLock()
+	_, ok := msp.validateIdentityCache.m[string(id.id.Mspid+":"+id.id.Id)]
+	msp.validateIdentityCache.RUnlock()
+	if ok {
+		return nil
+	}
+
 	validationChain, err := msp.getCertificationChainForBCCSPIdentity(id)
 	if err != nil {
 		return fmt.Errorf("Could not obtain certification chain, err %s", err)
@@ -1115,6 +1129,9 @@ func (msp *bccspmsp) validateIdentity(id *identity) error {
 		return fmt.Errorf("Could not validate identity's OUs, err %s", err)
 	}
 
+	msp.validateIdentityCache.Lock()
+	msp.validateIdentityCache.m[string(id.id.Mspid+":"+id.id.Id)] = true
+	msp.validateIdentityCache.Unlock()
 	return nil
 }
 
