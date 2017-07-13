@@ -110,6 +110,7 @@ type QueryResponse struct {
 type Doc struct {
 	ID          string          `json:"_id"`
 	Rev         string          `json:"_rev"`
+	Version     string          `json:"version"`
 	Attachments json.RawMessage `json:"_attachments"`
 }
 
@@ -1078,7 +1079,6 @@ func (dbclient *CouchDatabase) BatchRetrieveIDRevision(keys []string) ([]*DocMet
 
 //BatchUpdateDocuments - batch method to batch update documents
 func (dbclient *CouchDatabase) BatchUpdateDocuments(documents []*CouchDoc) ([]*BatchUpdateResponse, error) {
-
 	logger.Debugf("Entering BatchUpdateDocuments()  documents=%v", documents)
 
 	batchURL, err := url.Parse(dbclient.CouchInstance.conf.URL)
@@ -1154,7 +1154,6 @@ func (dbclient *CouchDatabase) BatchUpdateDocuments(documents []*CouchDoc) ([]*B
 	}
 
 	var jsonResponse = []*BatchUpdateResponse{}
-
 	err2 := json.Unmarshal(jsonResponseRaw, &jsonResponse)
 	if err2 != nil {
 		return nil, err2
