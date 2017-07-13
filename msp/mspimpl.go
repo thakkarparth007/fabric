@@ -17,30 +17,31 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
-	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/bccsp/signer"
+	"github.com/hyperledger/fabric/msp/arc"
 	m "github.com/hyperledger/fabric/protos/msp"
+)
+
+const (
+	deserializeIdentityCacheSize = 100
+	validateIdentityCacheSize    = 100
+	satisfiesPrincipalCacheSize  = 100
+	principalIdentityCacheSize   = 100
 )
 
 // This is an instantiation of an MSP that
 // uses BCCSP for its cryptographic primitives.
 type bccspmsp struct {
 	// cache for DeserializeIdentity.
-	deserializeIdentityCache struct {
-		sync.RWMutex
-		m map[string]Identity
-	}
+	deserializeIdentityCache *arc.ARC
 
 	// cache for validateIdentity
-	validateIdentityCache struct {
-		sync.RWMutex
-		m map[string]bool
-	}
+	validateIdentityCache *arc.ARC
 
 	// HACKY IMPLEMENATION. POLISHING REQUIRED!
 	// basically a map of principals=>identities=>stringified to booleans
@@ -48,13 +49,7 @@ type bccspmsp struct {
 	// Ideally this should be a part of the principal.
 	// Principal should tell whether an identity belongs
 	// to it or not.
-	satisfiesPrincipalCache struct {
-		sync.RWMutex
-		m map[string]*struct {
-			sync.RWMutex
-			m map[string]bool
-		}
-	}
+	satisfiesPrincipalCache *arc.ARC
 
 	// list of CA certs we trust
 	rootCerts []Identity
@@ -109,13 +104,9 @@ func NewBccspMsp() (MSP, error) {
 	bccsp := factory.GetDefault()
 	theMsp := &bccspmsp{}
 	theMsp.bccsp = bccsp
-
-	theMsp.deserializeIdentityCache.m = make(map[string]Identity)
-	theMsp.satisfiesPrincipalCache.m = make(map[string]*struct {
-		sync.RWMutex
-		m map[string]bool
-	})
-	theMsp.validateIdentityCache.m = make(map[string]bool)
+	theMsp.deserializeIdentityCache = arc.New(deserializeIdentityCacheSize)
+	theMsp.satisfiesPrincipalCache = arc.New(satisfiesPrincipalCacheSize)
+	theMsp.validateIdentityCache = arc.New(validateIdentityCacheSize)
 
 	return theMsp, nil
 }
@@ -456,11 +447,9 @@ func (msp *bccspmsp) DeserializeIdentity(serializedID []byte) (Identity, error) 
 
 // deserializeIdentityInternal returns an identity given its byte-level representation
 func (msp *bccspmsp) deserializeIdentityInternal(serializedIdentity []byte) (Identity, error) {
-	msp.deserializeIdentityCache.RLock()
-	myid, ok := msp.deserializeIdentityCache.m[string(serializedIdentity)]
-	msp.deserializeIdentityCache.RUnlock()
+	mycid, ok := msp.deserializeIdentityCache.Get(string(serializedIdentity))
 	if ok {
-		return myid, nil
+		return mycid.(Identity), nil
 	}
 
 	// This MSP will always deserialize certs this way
@@ -500,11 +489,9 @@ func (msp *bccspmsp) deserializeIdentityInternal(serializedIdentity []byte) (Ide
 		return nil, fmt.Errorf("Failed to import certitifacate's public key [%s]", err)
 	}
 
-	myid, err = newIdentity(id, cert, pub, msp)
+	myid, err := newIdentity(id, cert, pub, msp)
 	if err == nil {
-		msp.deserializeIdentityCache.Lock()
-		msp.deserializeIdentityCache.m[string(serializedIdentity)] = myid
-		msp.deserializeIdentityCache.Unlock()
+		msp.deserializeIdentityCache.Put(string(serializedIdentity), myid)
 	}
 	return myid, err
 }
@@ -517,30 +504,18 @@ func (msp *bccspmsp) SatisfiesPrincipal(id Identity, principal *m.MSPPrincipal) 
 		return idIdentifier.Mspid + ":" + idIdentifier.Id
 	}
 
-	msp.satisfiesPrincipalCache.RLock()
-	idmap, ok := msp.satisfiesPrincipalCache.m[string(principal.Principal)]
-	msp.satisfiesPrincipalCache.RUnlock()
+	idarc, ok := msp.satisfiesPrincipalCache.Get(string(principal.Principal))
 	if ok {
-		idmap.RLock()
-		satisfies, ok := idmap.m[getStrIdentifier(id)]
-		idmap.RUnlock()
+		satisfies, ok := idarc.(*arc.ARC).Get(getStrIdentifier(id))
 		if ok {
-			if satisfies {
+			if satisfies.(bool) {
 				return nil
 			}
 			return fmt.Errorf("Identity does not satisfy this principal")
 		}
 	} else {
-		msp.satisfiesPrincipalCache.Lock()
 		// horrible looking code. yes.
-		msp.satisfiesPrincipalCache.m[string(principal.Principal)] = &struct {
-			sync.RWMutex
-			m map[string]bool
-		}{
-			sync.RWMutex{},
-			make(map[string]bool),
-		}
-		msp.satisfiesPrincipalCache.Unlock()
+		msp.satisfiesPrincipalCache.Put(string(principal.Principal), arc.New(principalIdentityCacheSize))
 	}
 
 	switch principal.PrincipalClassification {
@@ -569,12 +544,8 @@ func (msp *bccspmsp) SatisfiesPrincipal(id Identity, principal *m.MSPPrincipal) 
 
 			err = msp.Validate(id)
 
-			msp.satisfiesPrincipalCache.Lock()
-			idmap, _ := msp.satisfiesPrincipalCache.m[string(principal.Principal)]
-			idmap.Lock()
-			idmap.m[getStrIdentifier(id)] = (err == nil)
-			idmap.Unlock()
-			msp.satisfiesPrincipalCache.Unlock()
+			idmap, _ := msp.satisfiesPrincipalCache.Get(string(principal.Principal))
+			idmap.(*arc.ARC).Put(getStrIdentifier(id), err == nil)
 			return err
 
 		case m.MSPRole_ADMIN:
@@ -593,12 +564,8 @@ func (msp *bccspmsp) SatisfiesPrincipal(id Identity, principal *m.MSPPrincipal) 
 				}
 			}
 
-			msp.satisfiesPrincipalCache.Lock()
-			idmap, _ := msp.satisfiesPrincipalCache.m[string(principal.Principal)]
-			idmap.Lock()
-			idmap.m[getStrIdentifier(id)] = isAdmin
-			idmap.Unlock()
-			msp.satisfiesPrincipalCache.Unlock()
+			idmap, _ := msp.satisfiesPrincipalCache.Get(string(principal.Principal))
+			idmap.(*arc.ARC).Put(getStrIdentifier(id), isAdmin)
 
 			if isAdmin {
 				return nil
@@ -1107,10 +1074,9 @@ func (msp *bccspmsp) sanitizeCert(cert *x509.Certificate) (*x509.Certificate, er
 }
 
 func (msp *bccspmsp) validateIdentity(id *identity) error {
-	msp.validateIdentityCache.RLock()
-	_, ok := msp.validateIdentityCache.m[string(id.id.Mspid+":"+id.id.Id)]
-	msp.validateIdentityCache.RUnlock()
+	_, ok := msp.validateIdentityCache.Get(string(id.id.Mspid + ":" + id.id.Id))
 	if ok {
+		// cache only stores if the identity is valid.
 		return nil
 	}
 
@@ -1129,9 +1095,7 @@ func (msp *bccspmsp) validateIdentity(id *identity) error {
 		return fmt.Errorf("Could not validate identity's OUs, err %s", err)
 	}
 
-	msp.validateIdentityCache.Lock()
-	msp.validateIdentityCache.m[string(id.id.Mspid+":"+id.id.Id)] = true
-	msp.validateIdentityCache.Unlock()
+	msp.validateIdentityCache.Put(string(id.id.Mspid+":"+id.id.Id), true)
 	return nil
 }
 
