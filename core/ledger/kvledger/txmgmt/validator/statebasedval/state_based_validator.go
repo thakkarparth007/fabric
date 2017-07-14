@@ -80,6 +80,90 @@ func (v *Validator) validateEndorserTX(envBytes []byte, doMVCCValidation bool, u
 	return txRWSet, txResult, err
 }
 
+func (v *Validator) collectRSetForBlockForBulkOptimizable(block *common.Block) error {
+	bulkOptimizable, ok := v.db.(statedb.BulkOptimizable)
+	if !ok {
+		return nil
+	}
+
+	// Committer validator has already set validation flags based on well formed tran checks
+	txsFilter := util.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+
+	// Precaution in case committer validator has not added validation flags yet
+	if len(txsFilter) == 0 {
+		txsFilter = util.NewTxValidationFlags(len(block.Data.Data))
+		block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+	}
+
+	var totalReadSet []*statedb.CompositeKey
+
+	for txIndex, envBytes := range block.Data.Data {
+		if txsFilter.IsInvalid(txIndex) {
+			// Skiping invalid transaction
+			logger.Warningf("Block [%d] Transaction index [%d] marked as invalid by committer. Reason code [%d]",
+				block.Header.Number, txIndex, txsFilter.Flag(txIndex))
+			continue
+		}
+
+		env, err := putils.GetEnvelopeFromBlock(envBytes)
+		if err != nil {
+			return err
+		}
+
+		payload, err := putils.GetPayload(env)
+		if err != nil {
+			return err
+		}
+
+		chdr, err := putils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
+		if err != nil {
+			return err
+		}
+
+		txType := common.HeaderType(chdr.Type)
+
+		if txType != common.HeaderType_ENDORSER_TRANSACTION {
+			//			logger.Debugf("Skipping mvcc validation for Block [%d] Transaction index [%d] because, the transaction type is [%s]",
+			//				block.Header.Number, txIndex, txType)
+			continue
+		}
+
+		var txResult peer.TxValidationCode
+
+		// Get the readset
+		respPayload, err := putils.GetActionFromEnvelope(envBytes)
+		if err != nil {
+			txResult = peer.TxValidationCode_NIL_TXACTION
+		}
+		//preparation for extracting RWSet from transaction
+		txRWSet := &rwsetutil.TxRwSet{}
+		// Get the Result from the Action
+		// and then Unmarshal it into a TxReadWriteSet using custom unmarshalling
+		if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
+			txResult = peer.TxValidationCode_INVALID_OTHER_REASON
+		}
+
+		txsFilter.SetFlag(txIndex, txResult)
+
+		//txRWSet != nil => t is valid
+		if txRWSet != nil {
+			for _, nsRWSet := range txRWSet.NsRwSets {
+				for _, kvRead := range nsRWSet.KvRwSet.Reads {
+					totalReadSet = append(totalReadSet, &statedb.CompositeKey{
+						Namespace: nsRWSet.NameSpace,
+						Key:       kvRead.Key,
+					})
+				}
+			}
+		}
+
+	}
+
+	bulkOptimizable.LoadCommittedVersions(totalReadSet)
+	block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+	return nil
+}
+
 // ValidateAndPrepareBatch implements method in Validator interface
 func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidation bool) (*statedb.UpdateBatch, error) {
 	startTime := time.Now()
@@ -98,6 +182,8 @@ func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidatio
 		txsFilter = util.NewTxValidationFlags(len(block.Data.Data))
 		block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
 	}
+
+	v.collectRSetForBlockForBulkOptimizable(block)
 
 	for txIndex, envBytes := range block.Data.Data {
 		if txsFilter.IsInvalid(txIndex) {
@@ -197,20 +283,6 @@ func (v *Validator) validateTx(txRWSet *rwsetutil.TxRwSet, updates *statedb.Upda
 }
 
 func (v *Validator) validateReadSet(ns string, kvReads []*kvrwset.KVRead, updates *statedb.UpdateBatch) (bool, error) {
-	if bulkOptimizable, ok := v.db.(statedb.BulkOptimizable); ok {
-		var readset []*statedb.CompositeKey
-		for _, kvRead := range kvReads {
-			readset = append(readset, &statedb.CompositeKey{
-				Namespace: ns,
-				Key:       kvRead.Key,
-			})
-		}
-		bulkOptimizable.LoadCommittedVersions(readset)
-
-		// Let the cache be cleared during the commit time
-		// otherwise commit will again do a batch get.
-		//defer bulkOptimizable.ClearCachedVersions()
-	}
 	for _, kvRead := range kvReads {
 		if valid, err := v.validateKVRead(ns, kvRead, updates); !valid || err != nil {
 			return valid, err
