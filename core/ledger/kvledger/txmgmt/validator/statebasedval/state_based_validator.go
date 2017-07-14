@@ -224,13 +224,9 @@ func (v *Validator) validateKVRead(ns string, kvRead *kvrwset.KVRead, updates *s
 	if updates.Exists(ns, kvRead.Key) {
 		return false, nil
 	}
-	versionedValue, err := v.db.GetState(ns, kvRead.Key)
+	committedVersion, err := v.db.GetVersion(ns, kvRead.Key)
 	if err != nil {
 		return false, nil
-	}
-	var committedVersion *version.Height
-	if versionedValue != nil {
-		committedVersion = versionedValue.Version
 	}
 
 	if !version.AreSame(committedVersion, rwsetutil.NewVersion(kvRead.Version)) {
