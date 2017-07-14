@@ -207,7 +207,9 @@ func (v *Validator) validateReadSet(ns string, kvReads []*kvrwset.KVRead, update
 		}
 		bulkOptimizable.LoadCommittedVersions(readset)
 
-		defer bulkOptimizable.ClearCachedVersions()
+		// Let the cache be cleared during the commit time
+		// otherwise commit will again do a batch get.
+		//defer bulkOptimizable.ClearCachedVersions()
 	}
 	for _, kvRead := range kvReads {
 		if valid, err := v.validateKVRead(ns, kvRead, updates); !valid || err != nil {
