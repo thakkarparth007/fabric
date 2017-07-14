@@ -197,6 +197,18 @@ func (v *Validator) validateTx(txRWSet *rwsetutil.TxRwSet, updates *statedb.Upda
 }
 
 func (v *Validator) validateReadSet(ns string, kvReads []*kvrwset.KVRead, updates *statedb.UpdateBatch) (bool, error) {
+	if bulkOptimizable, ok := v.db.(statedb.BulkOptimizable); ok {
+		var readset []*statedb.CompositeKey
+		for _, kvRead := range kvReads {
+			readset = append(readset, &statedb.CompositeKey{
+				Namespace: ns,
+				Key:       kvRead.Key,
+			})
+		}
+		bulkOptimizable.LoadCommittedVersions(readset)
+
+		defer bulkOptimizable.ClearCachedVersions()
+	}
 	for _, kvRead := range kvReads {
 		if valid, err := v.validateKVRead(ns, kvRead, updates); !valid || err != nil {
 			return valid, err
