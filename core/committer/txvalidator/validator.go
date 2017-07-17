@@ -117,7 +117,7 @@ func NewTxValidator(support Support) Validator {
 		m: make(map[string]*ccprovider.ChaincodeData),
 	}
 
-	myTxValidator := &txValidator{support,
+	return &txValidator{support,
 		&vsccValidatorImpl{
 			support:     support,
 			ccprovider:  ccprovider.GetChaincodeProvider(),
@@ -125,12 +125,6 @@ func NewTxValidator(support Support) Validator {
 			cDataMap:    cDataMap},
 		cDataMap,
 		make(chan struct{}, parallelVSCCWorkerCount)}
-
-	for i := 0; i < parallelVSCCWorkerCount; i++ {
-		myTxValidator.vsccWorkerToken <- struct{}{}
-	}
-
-	return myTxValidator
 }
 
 func (v *txValidator) chainExists(chain string) bool {
@@ -266,6 +260,12 @@ func (v *txValidator) Validate(block *common.Block) error {
 
 	var vsccWg sync.WaitGroup
 
+	// fill up the worker tokens
+	for i := 0; i < parallelVSCCWorkerCount; i++ {
+		v.vsccWorkerToken <- struct{}{}
+	}
+	txvalidator_log.WriteString(fmt.Sprintf("Added %d vscc worker tokens\n", parallelVSCCWorkerCount))
+
 	for tIdx, d := range block.Data.Data {
 		// don't do any work if we don't have to.
 		stopMutex.RLock()
@@ -295,10 +295,12 @@ func (v *txValidator) Validate(block *common.Block) error {
 		}
 
 		<-v.vsccWorkerToken
+		txvalidator_log.WriteString("Consumed token")
 		vsccWg.Add(1)
 		go func(tIdx int, d []byte) {
 			txResult, txChName, txUpgradeCC, err := v.parallelVSCCValidateTx(block, tIdx, d, env)
 			v.vsccWorkerToken <- struct{}{}
+			txvalidator_log.WriteString("Token returned")
 			vsccWg.Done()
 			if err != nil {
 				stopMutex.Lock()
