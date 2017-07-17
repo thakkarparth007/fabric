@@ -259,8 +259,11 @@ func (v *txValidator) Validate(block *common.Block) error {
 	var vsccWg sync.WaitGroup
 
 	// fill up the worker tokens
+	txvalidator_log.WriteString(fmt.Sprintf("Addin %d vscc worker tokens\n", parallelVSCCWorkerCount))
+	v.vsccWorkerToken = make(chan struct{}, parallelVSCCWorkerCount)
 	for i := 0; i < parallelVSCCWorkerCount; i++ {
 		v.vsccWorkerToken <- struct{}{}
+		txvalidator_log.WriteString("Loop:Added one vscc worker tokens\n")
 	}
 	txvalidator_log.WriteString(fmt.Sprintf("Added %d vscc worker tokens\n", parallelVSCCWorkerCount))
 
