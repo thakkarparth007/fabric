@@ -295,12 +295,12 @@ func (v *txValidator) Validate(block *common.Block) error {
 		}
 
 		<-v.vsccWorkerToken
-		txvalidator_log.WriteString("Consumed token")
+		txvalidator_log.WriteString("Consumed token\n")
 		vsccWg.Add(1)
 		go func(tIdx int, d []byte) {
 			txResult, txChName, txUpgradeCC, err := v.parallelVSCCValidateTx(block, tIdx, d, env)
 			v.vsccWorkerToken <- struct{}{}
-			txvalidator_log.WriteString("Token returned")
+			txvalidator_log.WriteString("Token returned\n")
 			vsccWg.Done()
 			if err != nil {
 				stopMutex.Lock()
