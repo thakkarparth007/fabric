@@ -19,7 +19,6 @@ package txvalidator
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -44,7 +43,7 @@ import (
 )
 
 // number of simultaneous vscc executions allowed
-var parallelVSCCWorkerCount = runtime.NumCPU()
+var parallelVSCCWorkerCount = 1 //runtime.NumCPU()
 
 var txvalidator_log, _ = os.Create("/root/txvalidator.log")
 
