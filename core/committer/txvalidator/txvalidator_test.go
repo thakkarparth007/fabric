@@ -19,6 +19,8 @@ package txvalidator
 import (
 	"testing"
 
+	"runtime"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/configtx/test"
 	"github.com/hyperledger/fabric/common/ledger/testutil"
@@ -63,7 +65,10 @@ func TestBlockValidation(t *testing.T) {
 	}
 
 	mockVsccValidator := &validator.MockVsccValidator{}
-	tValidator := &txValidator{&mocktxvalidator.Support{LedgerVal: ledger}, mockVsccValidator}
+	tValidator := &txValidator{&mocktxvalidator.Support{LedgerVal: ledger}, mockVsccValidator, make(chan struct{}, runtime.NumCPU())}
+	for i := 0; i < runtime.NumCPU(); i++ {
+		tValidator.vsccWorkerToken <- struct{}{}
+	}
 
 	bcInfo, _ := ledger.GetBlockchainInfo()
 	testutil.AssertEquals(t, bcInfo, &common.BlockchainInfo{
@@ -108,8 +113,10 @@ func TestNewTxValidator_DuplicateTransactions(t *testing.T) {
 
 	defer ledger.Close()
 
-	tValidator := &txValidator{&mocktxvalidator.Support{LedgerVal: ledger}, &validator.MockVsccValidator{}}
-
+	tValidator := &txValidator{&mocktxvalidator.Support{LedgerVal: ledger}, &validator.MockVsccValidator{}, make(chan struct{}, runtime.NumCPU())}
+	for i := 0; i < runtime.NumCPU(); i++ {
+		tValidator.vsccWorkerToken <- struct{}{}
+	}
 	// Create simple endorsement transaction
 	payload := &common.Payload{
 		Header: &common.Header{
