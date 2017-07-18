@@ -148,6 +148,11 @@ func (v *txValidator) parallelVSCCValidateTx(block *common.Block, tIdx int, d []
 	var ccName *sysccprovider.ChaincodeInstance
 	var upgradedCC *sysccprovider.ChaincodeInstance
 
+	var vscc = &vsccValidatorImpl{
+		support:     v.support,
+		ccprovider:  ccprovider.GetChaincodeProvider(),
+		sccprovider: sysccprovider.GetSystemChaincodeProvider()}
+
 	sTime := time.Now()
 	if payload, txResult = validation.ValidateTransaction(env); txResult != peer.TxValidationCode_VALID {
 		txvalidator_log.WriteString(fmt.Sprintf("%s ValidateTransaction failed %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
@@ -184,7 +189,7 @@ func (v *txValidator) parallelVSCCValidateTx(block *common.Block, tIdx int, d []
 		// Validate tx with vscc and policy
 		logger.Debug("Validating transaction vscc tx validate")
 		sTime = time.Now()
-		err, cde := v.vscc.VSCCValidateTx(payload, d, env)
+		err, cde := vscc.VSCCValidateTx(payload, d, env)
 		//err = nil
 		//cde := peer.TxValidationCode_VALID
 		txvalidator_log.WriteString(fmt.Sprintf("%s VSCCValidateTx done %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
