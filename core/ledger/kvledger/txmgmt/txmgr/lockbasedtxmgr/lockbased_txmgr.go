@@ -66,7 +66,7 @@ func (txmgr *LockBasedTxMgr) NewQueryExecutor() (ledger.QueryExecutor, error) {
 
 	tmpLogFileLock.Lock()
 	blockedReaders++
-	fmt.Fprintf(tmpLogFile, "%s Acquiring Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
+	fmt.Fprintf(tmpLogFile, "%s [%s] Acquiring Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), qe.id, blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
 
 	txmgr.commitRWLock.RLock()
@@ -74,7 +74,7 @@ func (txmgr *LockBasedTxMgr) NewQueryExecutor() (ledger.QueryExecutor, error) {
 	tmpLogFileLock.Lock()
 	blockedReaders--
 	blockingReaders++
-	fmt.Fprintf(tmpLogFile, "%s Rlock acquired. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
+	fmt.Fprintf(tmpLogFile, "%s [%s] Rlock acquired. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), qe.id, blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
 
 	return qe, nil
@@ -87,14 +87,14 @@ func (txmgr *LockBasedTxMgr) NewTxSimulator() (ledger.TxSimulator, error) {
 
 	tmpLogFileLock.Lock()
 	blockedReaders++
-	fmt.Fprintf(tmpLogFile, "%s Acquiring Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
+	fmt.Fprintf(tmpLogFile, "%s [%s] Acquiring Rlock. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), s.lockBasedQueryExecutor.id, blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
 
 	txmgr.commitRWLock.RLock()
 	tmpLogFileLock.Lock()
 	blockedReaders--
 	blockingReaders++
-	fmt.Fprintf(tmpLogFile, "%s Rlock acquired. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), blockedWriters, blockedReaders, blockingReaders)
+	fmt.Fprintf(tmpLogFile, "%s [%s] Rlock acquired. BlockedW: %d. BlockedR: %d. BlockingR: %d\n", time.Now(), s.lockBasedQueryExecutor.id, blockedWriters, blockedReaders, blockingReaders)
 	tmpLogFileLock.Unlock()
 
 	return s, nil
