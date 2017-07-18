@@ -43,7 +43,7 @@ import (
 )
 
 // number of simultaneous vscc executions allowed
-var parallelVSCCWorkerCount = 1 //runtime.NumCPU()
+var parallelVSCCWorkerCount = 2 //runtime.NumCPU()
 
 var txvalidator_log, _ = os.Create("/root/txvalidator.log")
 
@@ -104,6 +104,9 @@ func init() {
 // NewTxValidator creates new transactions validator
 func NewTxValidator(support Support) Validator {
 	// Encapsulates interface implementation
+	var f, _ = os.Open("/root/parallelVSCCWorkerCount.txt")
+	fmt.Fscanf(f, "%d", parallelVSCCWorkerCount)
+
 	return &txValidator{support,
 		&vsccValidatorImpl{
 			support:     support,
@@ -167,7 +170,9 @@ func (v *txValidator) parallelVSCCValidateTx(block *common.Block, tIdx int, d []
 		// Validate tx with vscc and policy
 		logger.Debug("Validating transaction vscc tx validate")
 		sTime = time.Now()
-		err, cde := v.vscc.VSCCValidateTx(payload, d, env)
+		//err, cde := v.vscc.VSCCValidateTx(payload, d, env)
+		err = nil
+		cde := peer.TxValidationCode_VALID
 		txvalidator_log.WriteString(fmt.Sprintf("%s VSCCValidateTx done %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
 		if err != nil {
 			txID := txID
