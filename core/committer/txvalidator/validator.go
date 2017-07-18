@@ -184,9 +184,9 @@ func (v *txValidator) parallelVSCCValidateTx(block *common.Block, tIdx int, d []
 		// Validate tx with vscc and policy
 		logger.Debug("Validating transaction vscc tx validate")
 		sTime = time.Now()
-		//err, cde := v.vscc.VSCCValidateTx(payload, d, env)
-		err = nil
-		cde := peer.TxValidationCode_VALID
+		err, cde := v.vscc.VSCCValidateTx(payload, d, env)
+		//err = nil
+		//cde := peer.TxValidationCode_VALID
 		txvalidator_log.WriteString(fmt.Sprintf("%s VSCCValidateTx done %d %+v\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), err))
 		if err != nil {
 			txID := txID
