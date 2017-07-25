@@ -116,7 +116,7 @@ func NewTxValidator(support Support) Validator {
 		m: make(map[string]*ccprovider.ChaincodeData),
 	}
 	var f, _ = os.Open("/root/parallelVSCCWorkerCount.txt")
-	fmt.Fscanf(f, "%d", parallelVSCCWorkerCount)
+	fmt.Fscanf(f, "%d", &parallelVSCCWorkerCount)
 	f.Close()
 
 	return &txValidator{support,
