@@ -117,7 +117,7 @@ func NewTxValidator(support Support) Validator {
 	}
 
 	var f, _ = os.Open("/root/parallelVSCCWorkerCount.txt")
-	fmt.Fscanf(f, "%d", parallelVSCCWorkerCount)
+	fmt.Fscanf(f, "%d", &parallelVSCCWorkerCount)
 
 	return &txValidator{support,
 		&vsccValidatorImpl{
