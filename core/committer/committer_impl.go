@@ -69,9 +69,7 @@ func NewLedgerCommitterReactive(ledger ledger.PeerLedger, validator txvalidator.
 	return &LedgerCommitter{ledger: ledger, validator: validator, eventer: eventer}
 }
 
-// Commit commits block to into the ledger
-// Note, it is important that this always be called serially
-func (lc *LedgerCommitter) Commit(block *common.Block) error {
+func (lc *LedgerCommitter) Validate(block *common.Block) error {
 	startTime := time.Now()
 	//committer_log.WriteString(fmt.Sprintf("%s Validating signatures", startTime))
 	// Validate and mark invalid transactions
@@ -82,6 +80,12 @@ func (lc *LedgerCommitter) Commit(block *common.Block) error {
 	}
 	committer_log.WriteString(fmt.Sprintf("%s Validated %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
 
+	return nil
+}
+
+// Commit commits block to into the ledger
+// Note, it is important that this always be called serially
+func (lc *LedgerCommitter) Commit(block *common.Block) error {
 	// Updating CSCC with new configuration block
 	if utils.IsConfigBlock(block) {
 		logger.Debug("Received configuration update, calling CSCC ConfigUpdate")
@@ -90,7 +94,7 @@ func (lc *LedgerCommitter) Commit(block *common.Block) error {
 		}
 	}
 
-	startTime = time.Now()
+	startTime := time.Now()
 	//committer_log.WriteString(fmt.Sprintf("%s Before commit\n", startTime))
 	if err := lc.ledger.Commit(block); err != nil {
 		committer_log.WriteString(fmt.Sprintf("%s Commit failed %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
