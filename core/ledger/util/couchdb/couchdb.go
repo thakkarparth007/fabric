@@ -1026,7 +1026,7 @@ func (dbclient *CouchDatabase) BatchRetrieveIDRevision(keys []string) ([]*DocMet
 	batchURL.Path = dbclient.DBName + "/_all_docs"
 
 	queryParms := batchURL.Query()
-	queryParms.Add("include_docs", "false")
+	queryParms.Add("include_docs", "true")
 	batchURL.RawQuery = queryParms.Encode()
 
 	keymap := make(map[string]interface{})
