@@ -168,6 +168,7 @@ type DocMetadata struct {
 	ID      string
 	Rev     string
 	Version string
+	Doc     json.RawMessage
 }
 
 //FileDetails defines the structure needed to send an attachment to couchdb
@@ -188,9 +189,10 @@ type BatchRetrieveDocMedatadataResponse struct {
 	Rows []struct {
 		ID  string `json:"id"`
 		Doc struct {
-			ID      string `json:"_id"`
-			Rev     string `json:"_rev"`
-			Version string `json:"version"`
+			ID      string          `json:"_id"`
+			Rev     string          `json:"_rev"`
+			Version string          `json:"version"`
+			Data    json.RawMessage `json:"data"`
 		} `json:"doc"`
 	} `json:"rows"`
 }
@@ -1015,8 +1017,8 @@ func (dbclient *CouchDatabase) QueryDocuments(query string) (*[]QueryResult, err
 
 }
 
-//BatchRetrieveIDRevision - batch method to retrieve IDs and revisions
-func (dbclient *CouchDatabase) BatchRetrieveIDRevision(keys []string) ([]*DocMetadata, error) {
+//BatchRetrieve - batch method to retrieve IDs and revisions
+func (dbclient *CouchDatabase) BatchRetrieve(keys []string, includeDocs bool) ([]*DocMetadata, error) {
 
 	batchURL, err := url.Parse(dbclient.CouchInstance.conf.URL)
 	if err != nil {
@@ -1026,7 +1028,11 @@ func (dbclient *CouchDatabase) BatchRetrieveIDRevision(keys []string) ([]*DocMet
 	batchURL.Path = dbclient.DBName + "/_all_docs"
 
 	queryParms := batchURL.Query()
-	queryParms.Add("include_docs", "true")
+	if includeDocs {
+		queryParms.Add("include_docs", "true")
+	} else {
+		queryParms.Add("include_docs", "false")
+	}
 	batchURL.RawQuery = queryParms.Encode()
 
 	keymap := make(map[string]interface{})
@@ -1069,7 +1075,7 @@ func (dbclient *CouchDatabase) BatchRetrieveIDRevision(keys []string) ([]*DocMet
 	revisionDocs := []*DocMetadata{}
 
 	for _, row := range jsonResponse.Rows {
-		revisionDoc := &DocMetadata{ID: row.ID, Rev: row.Doc.Rev, Version: row.Doc.Version}
+		revisionDoc := &DocMetadata{ID: row.ID, Rev: row.Doc.Rev, Version: row.Doc.Version, Doc: row.Doc.Data}
 		revisionDocs = append(revisionDocs, revisionDoc)
 	}
 

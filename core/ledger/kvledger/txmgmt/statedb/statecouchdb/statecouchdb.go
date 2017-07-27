@@ -56,6 +56,7 @@ type VersionedDBProvider struct {
 type CommittedVersions struct {
 	committedVersions map[statedb.CompositeKey]*version.Height
 	revisionNumbers   map[statedb.CompositeKey]string
+	committedValues   map[statedb.CompositeKey][]byte
 }
 
 // NewVersionedDBProvider instantiates VersionedDBProvider
@@ -109,8 +110,9 @@ func newVersionedDB(couchInstance *couchdb.CouchInstance, dbName string) (*Versi
 	}
 	versionMap := make(map[statedb.CompositeKey]*version.Height)
 	revMap := make(map[statedb.CompositeKey]string)
+	valMap := make(map[statedb.CompositeKey][]byte)
 
-	committedData := &CommittedVersions{committedVersions: versionMap, revisionNumbers: revMap}
+	committedData := &CommittedVersions{committedVersions: versionMap, revisionNumbers: revMap, committedValues: valMap}
 
 	return &VersionedDB{db, dbName, committedData}, nil
 }
@@ -137,6 +139,17 @@ func (vdb *VersionedDB) ValidateKey(key string) error {
 // GetState implements method in VersionedDB interface
 func (vdb *VersionedDB) GetState(namespace string, key string) (*statedb.VersionedValue, error) {
 	logger.Debugf("GetState(). ns=%s, key=%s", namespace, key)
+
+	compositeKeyStruct := statedb.CompositeKey{Namespace: namespace, Key: key}
+	returnValue, keyFound := vdb.committedData.committedValues[compositeKeyStruct]
+
+	if keyFound {
+		returnVersion, ok := vdb.committedData.committedVersions[compositeKeyStruct]
+		if ok {
+			return &statedb.VersionedValue{Value: returnValue, Version: returnVersion}, nil
+		}
+		// what? Shouldn't happen. But fetch the data without complaining anyway.
+	}
 
 	compositeKey := constructCompositeKey(namespace, key)
 
@@ -248,6 +261,13 @@ func removeDataWrapper(wrappedValue []byte, attachments []*couchdb.Attachment) (
 
 // GetStateMultipleKeys implements method in VersionedDB interface
 func (vdb *VersionedDB) GetStateMultipleKeys(namespace string, keys []string) ([]*statedb.VersionedValue, error) {
+
+	var compositeKeys []*statedb.CompositeKey
+	for _, key := range keys {
+		compositeKeys = append(compositeKeys, &statedb.CompositeKey{Namespace: namespace, Key: key})
+	}
+	vdb.LoadCommittedValues(compositeKeys)
+	defer vdb.ClearCachedVersions()
 
 	vals := make([]*statedb.VersionedValue, len(keys))
 	for i, key := range keys {
@@ -442,6 +462,51 @@ func printCompositeKeys(keyPointers []*statedb.CompositeKey) string {
 
 }
 
+// Same as LoadCommittedVersions except that it also loads values
+//LoadCommittedValues populates committedVersions and revisionNumbers
+func (vdb *VersionedDB) LoadCommittedValues(keys []*statedb.CompositeKey) {
+
+	//initialize version and revision maps
+	versionMap := vdb.committedData.committedVersions
+	revMap := vdb.committedData.revisionNumbers
+	valMap := vdb.committedData.committedValues
+
+	keymap := []string{}
+	for _, key := range keys {
+
+		//create composite key for couchdb
+		compositeDBKey := constructCompositeKey(key.Namespace, key.Key)
+		//add the composite key to the list of required keys
+		keymap = append(keymap, string(compositeDBKey))
+
+		compositeKey := statedb.CompositeKey{Namespace: key.Namespace, Key: key.Key}
+
+		//initialize empty values for each key
+		versionMap[compositeKey] = nil
+		revMap[compositeKey] = ""
+
+	}
+
+	docs, _ := vdb.db.BatchRetrieve(keymap, true)
+
+	for _, doc := range docs {
+
+		if len(doc.Version) != 0 {
+
+			ns, key := splitCompositeKey([]byte(doc.ID))
+			compositeKey := statedb.CompositeKey{Namespace: ns, Key: key}
+
+			versionMap[compositeKey] = createVersionFromString(doc.Version)
+			revMap[compositeKey] = doc.Rev
+
+			var val []byte
+			doc.Doc.UnmarshalJSON(val)
+			valMap[compositeKey] = val
+
+		}
+	}
+}
+
 //LoadCommittedVersions populates committedVersions and revisionNumbers
 func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) {
 
@@ -465,7 +530,7 @@ func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) {
 
 	}
 
-	idVersions, _ := vdb.db.BatchRetrieveIDRevision(keymap)
+	idVersions, _ := vdb.db.BatchRetrieve(keymap, false)
 
 	for _, idVersion := range idVersions {
 
@@ -501,8 +566,9 @@ func (vdb *VersionedDB) ClearCachedVersions() {
 
 	versionMap := make(map[statedb.CompositeKey]*version.Height)
 	revMap := make(map[statedb.CompositeKey]string)
+	valMap := make(map[statedb.CompositeKey][]byte)
 
-	vdb.committedData = &CommittedVersions{committedVersions: versionMap, revisionNumbers: revMap}
+	vdb.committedData = &CommittedVersions{committedVersions: versionMap, revisionNumbers: revMap, committedValues: valMap}
 
 }
 

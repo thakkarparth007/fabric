@@ -65,6 +65,7 @@ type VersionedDB interface {
 //BulkOptimizable interface provides additional functions for
 //databases capable of batch operations
 type BulkOptimizable interface {
+	LoadCommittedValues(keys []*CompositeKey)
 	LoadCommittedVersions(keys []*CompositeKey)
 	ClearCachedVersions()
 }
