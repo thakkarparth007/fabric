@@ -39,6 +39,8 @@ import (
 
 var gossip_state_log, _ = os.Create("/root/gossip_state.log")
 
+var pipelinedValidateBlock_depth = 1
+
 // GossipStateProvider is the interface to acquire sequences of the ledger blocks
 // capable to full fill missing blocks by running state replication and
 // sending request to get missing block to other nodes
@@ -115,6 +117,8 @@ type GossipStateProviderImpl struct {
 	once sync.Once
 
 	stateTransferActive int32
+
+	commitQueue chan *common.Block
 }
 
 var logger *logging.Logger // package-level logger
@@ -175,6 +179,15 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 		return nil
 	}
 
+	if f, err := os.Open("/root/pipelinedValidateBlock_depth.txt"); err != nil {
+		fmt.Fscanf(f, "%d", &pipelinedValidateBlock_depth)
+		f.Close()
+	}
+
+	if pipelinedValidateBlock_depth <= 0 {
+		pipelinedValidateBlock_depth = 1
+	}
+
 	s := &GossipStateProviderImpl{
 		// MessageCryptoService
 		mcs: mcs,
@@ -205,6 +218,8 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 		stateTransferActive: 0,
 
 		once: sync.Once{},
+
+		commitQueue: make(chan *common.Block, pipelinedValidateBlock_depth),
 	}
 
 	nodeMetastate := NewNodeMetastate(height - 1)
@@ -230,6 +245,8 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 	go s.antiEntropy()
 	// Taking care of state request messages
 	go s.processStateRequests()
+	// start committer thread
+	go s.startCommitHandler()
 
 	return s
 }
@@ -458,7 +475,7 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 				}
 				logger.Debug("New block with claimed sequence number ", payload.SeqNum, " transactions num ", len(rawBlock.Data.Data))
 				sTime := time.Now()
-				s.commitBlock(rawBlock)
+				s.validateBlockAndPushForCommit(rawBlock)
 				gossip_state_log.WriteString(fmt.Sprintf("%s Commit duration %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
 			}
 			gossip_state_log.WriteString(fmt.Sprintf("%s Loop over %d\n", time.Now(), time.Now().Sub(consumeTime).Nanoseconds()))
@@ -647,27 +664,42 @@ func (s *GossipStateProviderImpl) AddPayload(payload *proto.Payload) error {
 	return s.payloads.Push(payload)
 }
 
-func (s *GossipStateProviderImpl) commitBlock(block *common.Block) error {
-	if err := s.committer.Commit(block); err != nil {
-		logger.Errorf("Got error while committing(%s)", err)
-		return err
+func (s *GossipStateProviderImpl) validateBlockAndPushForCommit(block *common.Block) error {
+	ledgerCommiter, ok := s.committer.(*committer.LedgerCommitter)
+	if ok {
+		if err := ledgerCommiter.Validate(block); err != nil {
+			return err
+		}
 	}
 
-	// Update ledger level within node metadata
-	nodeMetastate := NewNodeMetastate(block.Header.Number)
-	// Decode nodeMetastate to byte array
-	b, err := nodeMetastate.Bytes()
-	if err == nil {
-		s.gossip.UpdateChannelMetadata(b, common2.ChainID(s.chainID))
-	} else {
-
-		logger.Errorf("Unable to serialize node meta nodeMetastate, error = %s", err)
-	}
-
-	logger.Debugf("Channel [%s]: Created block [%d] with %d transaction(s)",
-		s.chainID, block.Header.Number, len(block.Data.Data))
-
+	s.commitQueue <- block
 	return nil
+}
+
+func (s *GossipStateProviderImpl) startCommitHandler() {
+	for {
+		block := <-s.commitQueue
+
+		if err := s.committer.Commit(block); err != nil {
+			logger.Errorf("Got error while committing(%s)", err)
+			//return err
+		}
+
+		// Update ledger level within node metadata
+		nodeMetastate := NewNodeMetastate(block.Header.Number)
+		// Decode nodeMetastate to byte array
+		b, err := nodeMetastate.Bytes()
+		if err == nil {
+			s.gossip.UpdateChannelMetadata(b, common2.ChainID(s.chainID))
+		} else {
+			logger.Errorf("Unable to serialize node meta nodeMetastate, error = %s", err)
+		}
+
+		logger.Debugf("Channel [%s]: Created block [%d] with %d transaction(s)",
+			s.chainID, block.Header.Number, len(block.Data.Data))
+
+		//return nil
+	}
 }
 
 func min(a uint64, b uint64) uint64 {
