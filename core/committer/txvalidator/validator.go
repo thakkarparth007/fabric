@@ -19,6 +19,7 @@ package txvalidator
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -74,20 +75,27 @@ type vsccValidator interface {
 	VSCCValidateTx(payload *common.Payload, envBytes []byte, env *common.Envelope) (error, peer.TxValidationCode)
 }
 
+type cDataMap struct {
+	sync.RWMutex
+	m map[string]*ccprovider.ChaincodeData
+}
+
 // vsccValidator implementation which used to call
 // vscc chaincode and validate block transactions
 type vsccValidatorImpl struct {
 	support     Support
 	ccprovider  ccprovider.ChaincodeProvider
 	sccprovider sysccprovider.SystemChaincodeProvider
+	cDataMap    *cDataMap
 }
 
 // implementation of Validator interface, keeps
 // reference to the ledger to enable tx simulation
 // and execution of vscc
 type txValidator struct {
-	support Support
-	vscc    vsccValidator
+	support  Support
+	vscc     vsccValidator
+	cDataMap *cDataMap
 }
 
 var logger *logging.Logger // package-level logger
@@ -100,11 +108,18 @@ func init() {
 // NewTxValidator creates new transactions validator
 func NewTxValidator(support Support) Validator {
 	// Encapsulates interface implementation
+
+	cDataMap := &cDataMap{
+		m: make(map[string]*ccprovider.ChaincodeData),
+	}
+
 	return &txValidator{support,
 		&vsccValidatorImpl{
 			support:     support,
 			ccprovider:  ccprovider.GetChaincodeProvider(),
-			sccprovider: sysccprovider.GetSystemChaincodeProvider()}}
+			sccprovider: sysccprovider.GetSystemChaincodeProvider(),
+			cDataMap:    cDataMap},
+		cDataMap}
 }
 
 func (v *txValidator) chainExists(chain string) bool {
@@ -119,6 +134,13 @@ func (v *txValidator) Validate(block *common.Block) error {
 	startTime := time.Now()
 	txvalidator_log.WriteString(fmt.Sprintf("%s Signature validation starts\n", startTime))
 	defer txvalidator_log.WriteString(fmt.Sprintf("%s Signature validation ends %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
+
+	// don't reuse the cData cache for another block!
+	defer func() {
+		v.cDataMap.Lock()
+		v.cDataMap.m = make(map[string]*ccprovider.ChaincodeData)
+		v.cDataMap.Unlock()
+	}()
 
 	// Initialize trans as valid here, then set invalidation reason code upon invalidation below
 	txsfltr := ledgerUtil.NewTxValidationFlags(len(block.Data.Data))
@@ -602,6 +624,14 @@ func (v *vsccValidatorImpl) VSCCValidateTxForCC(envBytes []byte, txid, chid, vsc
 }
 
 func (v *vsccValidatorImpl) getCDataForCC(ccid string) (*ccprovider.ChaincodeData, error) {
+	v.cDataMap.RLock()
+	cdata, ok := v.cDataMap.m[ccid]
+	v.cDataMap.RUnlock()
+
+	if ok {
+		return cdata, nil
+	}
+
 	l := v.support.Ledger()
 	if l == nil {
 		return nil, fmt.Errorf("nil ledger instance")
@@ -635,6 +665,10 @@ func (v *vsccValidatorImpl) getCDataForCC(ccid string) (*ccprovider.ChaincodeDat
 	if len(cd.Policy) == 0 {
 		return nil, fmt.Errorf("lscc's state for [%s] is invalid, policy field must be set.", ccid)
 	}
+
+	v.cDataMap.Lock()
+	v.cDataMap.m[ccid] = cd
+	v.cDataMap.Unlock()
 
 	return cd, err
 }
