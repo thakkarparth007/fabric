@@ -135,11 +135,13 @@ func (v *txValidator) Validate(block *common.Block) error {
 	txvalidator_log.WriteString(fmt.Sprintf("%s Signature validation starts\n", startTime))
 	defer txvalidator_log.WriteString(fmt.Sprintf("%s Signature validation ends %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
 
-	// don't reuse the cData cache for another block!
+	// don't reuse the cData cache for another block if this was a config block
 	defer func() {
-		v.cDataMap.Lock()
-		v.cDataMap.m = make(map[string]*ccprovider.ChaincodeData)
-		v.cDataMap.Unlock()
+		if utils.IsConfigBlock(block) {
+			v.cDataMap.Lock()
+			v.cDataMap.m = make(map[string]*ccprovider.ChaincodeData)
+			v.cDataMap.Unlock()
+		}
 	}()
 
 	// Initialize trans as valid here, then set invalidation reason code upon invalidation below
