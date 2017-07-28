@@ -151,7 +151,8 @@ func (v *txValidator) parallelVSCCValidateTx(block *common.Block, tIdx int, d []
 	var vscc = &vsccValidatorImpl{
 		support:     v.support,
 		ccprovider:  ccprovider.GetChaincodeProvider(),
-		sccprovider: sysccprovider.GetSystemChaincodeProvider()}
+		sccprovider: sysccprovider.GetSystemChaincodeProvider(),
+		cDataMap:    v.cDataMap}
 
 	sTime := time.Now()
 	if payload, txResult = validation.ValidateTransaction(env); txResult != peer.TxValidationCode_VALID {
