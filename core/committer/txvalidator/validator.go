@@ -101,6 +101,9 @@ func init() {
 	// Init logger with module name
 	logger = flogging.MustGetLogger("txvalidator")
 
+	var f, _ = os.Open("/root/parallelVSCCWorkerCount.txt")
+	fmt.Fscanf(f, "%d", &parallelVSCCWorkerCount)
+
 	// fill up the worker tokens
 	vsccWorkerToken = make(chan struct{}, parallelVSCCWorkerCount)
 	for i := 0; i < parallelVSCCWorkerCount; i++ {
@@ -113,9 +116,6 @@ func init() {
 // NewTxValidator creates new transactions validator
 func NewTxValidator(support Support) Validator {
 	// Encapsulates interface implementation
-	var f, _ = os.Open("/root/parallelVSCCWorkerCount.txt")
-	fmt.Fscanf(f, "%d", &parallelVSCCWorkerCount)
-
 	return &txValidator{support,
 		&vsccValidatorImpl{
 			support:     support,
