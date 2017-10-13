@@ -102,10 +102,19 @@ type txValidator struct {
 }
 
 var logger *logging.Logger // package-level logger
+var vsccWorkerToken chan struct{}
 
 func init() {
 	// Init logger with module name
 	logger = flogging.MustGetLogger("txvalidator")
+
+	// fill up the worker tokens
+	vsccWorkerToken = make(chan struct{}, parallelVSCCWorkerCount)
+	for i := 0; i < parallelVSCCWorkerCount; i++ {
+		vsccWorkerToken <- struct{}{}
+	}
+	txvalidator_log.WriteString(fmt.Sprintf("Added %d vscc worker tokens\n", parallelVSCCWorkerCount))
+
 }
 
 // NewTxValidator creates new transactions validator
@@ -267,15 +276,6 @@ func (v *txValidator) Validate(block *common.Block) error {
 
 	var vsccWg sync.WaitGroup
 
-	// fill up the worker tokens
-	txvalidator_log.WriteString(fmt.Sprintf("Addin %d vscc worker tokens\n", parallelVSCCWorkerCount))
-	v.vsccWorkerToken = make(chan struct{}, parallelVSCCWorkerCount)
-	for i := 0; i < parallelVSCCWorkerCount; i++ {
-		v.vsccWorkerToken <- struct{}{}
-		txvalidator_log.WriteString("Loop:Added one vscc worker tokens\n")
-	}
-	txvalidator_log.WriteString(fmt.Sprintf("Added %d vscc worker tokens\n", parallelVSCCWorkerCount))
-
 	for tIdx, d := range block.Data.Data {
 		// don't do any work if we don't have to.
 		stopMutex.RLock()
@@ -304,12 +304,12 @@ func (v *txValidator) Validate(block *common.Block) error {
 			continue
 		}
 
-		<-v.vsccWorkerToken
+		<-vsccWorkerToken
 		txvalidator_log.WriteString("Consumed token\n")
 		vsccWg.Add(1)
 		go func(tIdx int, d []byte) {
 			txResult, txChName, txUpgradeCC, err := v.parallelVSCCValidateTx(block, tIdx, d, env)
-			v.vsccWorkerToken <- struct{}{}
+			vsccWorkerToken <- struct{}{}
 			txvalidator_log.WriteString("Token returned\n")
 			vsccWg.Done()
 			if err != nil {
