@@ -139,6 +139,11 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 		if !msg.IsRemoteStateMessage() {
 			return false
 		}
+		// Ensure we deal only with messages that belong to this channel
+		if !bytes.Equal(msg.Channel, []byte(chainID)) {
+			return false
+		}
+
 		// If we're not running with authentication, no point
 		// in enforcing access control
 		if !receivedMsg.GetConnectionInfo().IsAuthenticated() {
