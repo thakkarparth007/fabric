@@ -19,6 +19,8 @@ package cauthdsl
 import (
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/hyperledger/fabric/common/policies"
 	cb "github.com/hyperledger/fabric/protos/common"
@@ -26,6 +28,8 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/msp"
 )
+
+var evaluate_log, _ = os.Create("/root/cauthdslEvaluate.log")
 
 type provider struct {
 	deserializer msp.IdentityDeserializer
@@ -70,7 +74,10 @@ func (p *policy) Evaluate(signatureSet []*cb.SignedData) error {
 		return fmt.Errorf("No such policy")
 	}
 
+	startTime := time.Now()
 	ok := p.evaluator(signatureSet, make([]bool, len(signatureSet)))
+	evaluate_log.WriteString(fmt.Sprintf("Time: %d Evaluate result: %t\n", time.Now().Sub(startTime).Nanoseconds(), ok))
+
 	if !ok {
 		return errors.New("Failed to authenticate policy")
 	}
