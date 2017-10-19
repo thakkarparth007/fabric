@@ -31,6 +31,33 @@ import (
 var regex *regexp.Regexp = regexp.MustCompile("^([[:alnum:]]+)([.])(member|admin)$")
 var regexErr *regexp.Regexp = regexp.MustCompile("^No parameter '([^']+)' found[.]$")
 
+// a stub function - it returns the same string as it's passed.
+// This will be evaluated by second/third passes to convert to a proto policy
+func outof(args ...interface{}) (interface{}, error) {
+	toret := "outof("
+	for i, arg := range args {
+		switch t := arg.(type) {
+		case float32:
+			toret += strconv.Itoa(int(arg.(float32)))
+		case float64:
+			toret += strconv.Itoa(int(arg.(float64)))
+		case string:
+			if regex.MatchString(t) {
+				toret += "'" + t + "'"
+			} else {
+				toret += t
+			}
+		default:
+			return nil, fmt.Errorf("Unexpected type %s", reflect.TypeOf(arg))
+		}
+		if i < len(args)-1 {
+			toret += ", "
+		}
+	}
+
+	return toret + ")", nil
+}
+
 func and(args ...interface{}) (interface{}, error) {
 	toret := "outof(" + strconv.Itoa(len(args))
 	for _, arg := range args {
@@ -205,7 +232,7 @@ func newContext() *context {
 //	- ROLE is either the string "member" or the string "admin" representing the required role
 func FromString(policy string) (*common.SignaturePolicyEnvelope, error) {
 	// first we translate the and/or business into outof gates
-	intermediate, err := govaluate.NewEvaluableExpressionWithFunctions(policy, map[string]govaluate.ExpressionFunction{"AND": and, "and": and, "OR": or, "or": or})
+	intermediate, err := govaluate.NewEvaluableExpressionWithFunctions(policy, map[string]govaluate.ExpressionFunction{"AND": and, "and": and, "OR": or, "or": or, "OUTOF": outof, "outof": outof, "OutOf": outof})
 	if err != nil {
 		return nil, err
 	}
