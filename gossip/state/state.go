@@ -38,6 +38,7 @@ import (
 )
 
 var gossip_state_log, _ = os.Create("/root/gossip_state.log")
+var commit_pipeline_log, _ = os.Create("/root/commit_pipeline.log")
 
 var pipelinedValidateBlock_depth = 1
 
@@ -678,6 +679,7 @@ func (s *GossipStateProviderImpl) validateBlockAndPushForCommit(block *common.Bl
 
 func (s *GossipStateProviderImpl) startCommitHandler() {
 	for {
+		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v CommitQueueLen %d\n", time.Now(), len(s.commitQueue)))
 		block := <-s.commitQueue
 
 		if err := s.committer.Commit(block); err != nil {
