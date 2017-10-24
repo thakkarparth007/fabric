@@ -180,7 +180,7 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 		return nil
 	}
 
-	if f, err := os.Open("/root/pipelinedValidateBlock_depth.txt"); err != nil {
+	if f, err := os.Open("/root/pipelinedValidateBlock_depth.txt"); err == nil {
 		fmt.Fscanf(f, "%d", &pipelinedValidateBlock_depth)
 		f.Close()
 	}
@@ -222,6 +222,8 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 
 		commitQueue: make(chan *common.Block, pipelinedValidateBlock_depth),
 	}
+
+	commit_pipeline_log.WriteString(fmt.Sprintf("Commit queue capacity: %d, %d\n", cap(s.commitQueue), pipelinedValidateBlock_depth))
 
 	nodeMetastate := NewNodeMetastate(height - 1)
 
@@ -450,7 +452,7 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 		for {
 			<-s.payloads.Ready()
 			readyTime = time.Now()
-			gossip_state_log.WriteString(fmt.Sprintf("%s Ready!\n", readyTime.String()))
+			gossip_state_log.WriteString(fmt.Sprintf("%s [%s] Ready!\n", readyTime.String(), s.chainID))
 			mychan <- struct{}{}
 		}
 	}()
@@ -460,7 +462,7 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 		// Wait for notification that next seq has arrived
 		case <-mychan:
 			consumeTime := time.Now()
-			gossip_state_log.WriteString(fmt.Sprintf("%s Consumed. Diff = %d\n", consumeTime, consumeTime.Sub(readyTime).Nanoseconds()))
+			gossip_state_log.WriteString(fmt.Sprintf("%s [%s] Consumed. Diff = %d\n", consumeTime, s.chainID, consumeTime.Sub(readyTime).Nanoseconds()))
 			logger.Debugf("Ready to transfer payloads to the ledger, next sequence number is = [%d]", s.payloads.Next())
 			// Collect all subsequent payloads
 			for payload := s.payloads.Pop(); payload != nil; payload = s.payloads.Pop() {
@@ -477,9 +479,9 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 				logger.Debug("New block with claimed sequence number ", payload.SeqNum, " transactions num ", len(rawBlock.Data.Data))
 				sTime := time.Now()
 				s.validateBlockAndPushForCommit(rawBlock)
-				gossip_state_log.WriteString(fmt.Sprintf("%s Commit duration %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+				gossip_state_log.WriteString(fmt.Sprintf("%s [%s] Validation (Pipelined) duration %d\n", time.Now(), s.chainID, time.Now().Sub(sTime).Nanoseconds()))
 			}
-			gossip_state_log.WriteString(fmt.Sprintf("%s Loop over %d\n", time.Now(), time.Now().Sub(consumeTime).Nanoseconds()))
+			gossip_state_log.WriteString(fmt.Sprintf("%s [%s] Loop over %d\n", time.Now(), s.chainID, time.Now().Sub(consumeTime).Nanoseconds()))
 		case <-s.stopCh:
 			s.stopCh <- struct{}{}
 			logger.Debug("State provider has been stoped, finishing to push new blocks.")
@@ -679,20 +681,24 @@ func (s *GossipStateProviderImpl) validateBlockAndPushForCommit(block *common.Bl
 
 func (s *GossipStateProviderImpl) startCommitHandler() {
 	for {
-		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v CommitQueueLen %d\n", time.Now(), len(s.commitQueue)))
+		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v [%s] CommitQueueLen %d\n", time.Now(), s.chainID, len(s.commitQueue)))
 		block := <-s.commitQueue
 
+		startTime := time.Now()
 		if err := s.committer.Commit(block); err != nil {
 			logger.Errorf("Got error while committing(%s)", err)
 			//return err
 		}
+		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v [%s] Commit() took %d ns\n", time.Now(), s.chainID, time.Now().Sub(startTime)))
 
 		// Update ledger level within node metadata
 		nodeMetastate := NewNodeMetastate(block.Header.Number)
 		// Decode nodeMetastate to byte array
 		b, err := nodeMetastate.Bytes()
 		if err == nil {
+			startTime = time.Now()
 			s.gossip.UpdateChannelMetadata(b, common2.ChainID(s.chainID))
+			commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v [%s] UpdateChannelMetadata() took %d ns\n", time.Now(), s.chainID, time.Now().Sub(startTime)))
 		} else {
 			logger.Errorf("Unable to serialize node meta nodeMetastate, error = %s", err)
 		}
