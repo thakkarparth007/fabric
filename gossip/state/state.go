@@ -34,6 +34,7 @@ import (
 	"github.com/hyperledger/fabric/gossip/util"
 	"github.com/hyperledger/fabric/protos/common"
 	proto "github.com/hyperledger/fabric/protos/gossip"
+	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/op/go-logging"
 )
 
@@ -120,6 +121,8 @@ type GossipStateProviderImpl struct {
 	stateTransferActive int32
 
 	commitQueue chan *common.Block
+
+	commitDrainChan chan struct{}
 }
 
 var logger *logging.Logger // package-level logger
@@ -221,6 +224,8 @@ func NewGossipStateProvider(chainID string, g GossipAdapter, committer committer
 		once: sync.Once{},
 
 		commitQueue: make(chan *common.Block, pipelinedValidateBlock_depth),
+
+		commitDrainChan: make(chan struct{}),
 	}
 
 	commit_pipeline_log.WriteString(fmt.Sprintf("Commit queue capacity: %d, %d\n", cap(s.commitQueue), pipelinedValidateBlock_depth))
@@ -675,24 +680,84 @@ func (s *GossipStateProviderImpl) validateBlockAndPushForCommit(block *common.Bl
 		}
 	}
 
-	s.commitQueue <- block
+	if utils.IsConfigBlock(block) {
+		fmt.Printf("Config block. Waiting for drain\n")
+		<-s.commitDrainChan // wait for the commit queue to drain
+		fmt.Printf("Drained\n")
+	} else {
+		// here we want to ensure that the committer goroutine doesn't block because
+		// it is waiting for its drain channel to be cleared. However, we also
+		// don't want to block if the drain channel hasn't been written to yet (say,
+		// the committer is busy committing)
+		select {
+		case <-s.commitDrainChan:
+			fmt.Printf("Normal block. Drained\n")
+		default:
+			fmt.Printf("Normal block. Queueing\n")
+		}
+	}
+	fmt.Printf("Sending block\n")
+	s.commitQueue <- block // push the block
+	fmt.Printf("Sent block\n")
+	// Here, we need not worry what happens if we push one block before the config
+	// block has been processed by the committer goroutine. If it sees a config
+	// block, it won't read from commitQueue till it processes this block.
 	return nil
 }
 
 func (s *GossipStateProviderImpl) startCommitHandler() {
 	for {
-		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v [%s] CommitQueueLen %d\n", time.Now(), s.chainID, len(s.commitQueue)))
-		block := <-s.commitQueue
-
 		startTime := time.Now()
-		if err := s.committer.Commit(block); err != nil {
-			logger.Errorf("Got error while committing(%s)", err)
-			//return err
+		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v [%s] CommitQueueLen %d\n", time.Now(), s.chainID, len(s.commitQueue)))
+		blocks := make([]*common.Block, 1)
+		select {
+		case blocks[0] = <-s.commitQueue:
+		default:
+			// Drain only if we can't read anything from the queue chan
+			// This signifies everything that was ever sent since the last
+			// drain has been committed
+			fmt.Printf("Draining\n")
+			s.commitDrainChan <- struct{}{}
+			fmt.Printf("Drained\n")
+
+			// Once drained, we wait for the next block from queue
+			blocks[0] = <-s.commitQueue
+		}
+
+		// read all existing blocks, with a cap - just being paranoid
+		maxBlocksLen := cap(s.commitQueue)
+
+		// source won't send config blocks 'in between'. It is sufficient
+		// to check if the first block in the channel after draining is
+		// config or not.
+		if utils.IsConfigBlock(blocks[0]) {
+			maxBlocksLen = 1
+		}
+		for i := 0; i < maxBlocksLen; i++ {
+			select {
+			case block := <-s.commitQueue:
+				blocks = append(blocks, block)
+			default:
+				break
+			}
+		}
+		fmt.Printf("Sending %d blocks to bulk commit\n", len(blocks))
+
+		errs := s.committer.CommitBulk(blocks)
+		lastValidBlockIdx := 0
+		for i, err := range errs {
+			if err != nil {
+				logger.Errorf("Got error while committing(%s)", err)
+				//return err
+			} else {
+				lastValidBlockIdx = i
+			}
 		}
 		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v [%s] Commit() took %d ns\n", time.Now(), s.chainID, time.Now().Sub(startTime)))
 
+		lastValidBlock := blocks[lastValidBlockIdx]
 		// Update ledger level within node metadata
-		nodeMetastate := NewNodeMetastate(block.Header.Number)
+		nodeMetastate := NewNodeMetastate(lastValidBlock.Header.Number)
 		// Decode nodeMetastate to byte array
 		b, err := nodeMetastate.Bytes()
 		if err == nil {
@@ -704,7 +769,7 @@ func (s *GossipStateProviderImpl) startCommitHandler() {
 		}
 
 		logger.Debugf("Channel [%s]: Created block [%d] with %d transaction(s)",
-			s.chainID, block.Header.Number, len(block.Data.Data))
+			s.chainID, lastValidBlock.Header.Number, len(lastValidBlock.Data.Data))
 
 		//return nil
 	}

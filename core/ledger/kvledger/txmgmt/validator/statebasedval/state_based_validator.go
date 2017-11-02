@@ -80,87 +80,89 @@ func (v *Validator) validateEndorserTX(envBytes []byte, doMVCCValidation bool, u
 	return txRWSet, txResult, err
 }
 
-func (v *Validator) collectRSetForBlockForBulkOptimizable(block *common.Block) error {
+func (v *Validator) collectRSetForBlockForBulkOptimizable(blocks []*common.Block) error {
 	bulkOptimizable, ok := v.db.(statedb.BulkOptimizable)
 	if !ok {
 		return nil
 	}
 
-	// Committer validator has already set validation flags based on well formed tran checks
-	txsFilter := util.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+	var totalReadSet []*statedb.CompositeKey
 
-	// Precaution in case committer validator has not added validation flags yet
-	if len(txsFilter) == 0 {
-		txsFilter = util.NewTxValidationFlags(len(block.Data.Data))
+	for _, block := range blocks {
+		// Committer validator has already set validation flags based on well formed tran checks
+		txsFilter := util.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+
+		// Precaution in case committer validator has not added validation flags yet
+		if len(txsFilter) == 0 {
+			txsFilter = util.NewTxValidationFlags(len(block.Data.Data))
+			block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+		}
+
+		for txIndex, envBytes := range block.Data.Data {
+			if txsFilter.IsInvalid(txIndex) {
+				// Skiping invalid transaction
+				logger.Warningf("Block [%d] Transaction index [%d] marked as invalid by committer. Reason code [%d]",
+					block.Header.Number, txIndex, txsFilter.Flag(txIndex))
+				continue
+			}
+
+			env, err := putils.GetEnvelopeFromBlock(envBytes)
+			if err != nil {
+				return err
+			}
+
+			payload, err := putils.GetPayload(env)
+			if err != nil {
+				return err
+			}
+
+			chdr, err := putils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
+			if err != nil {
+				return err
+			}
+
+			txType := common.HeaderType(chdr.Type)
+
+			if txType != common.HeaderType_ENDORSER_TRANSACTION {
+				//			logger.Debugf("Skipping mvcc validation for Block [%d] Transaction index [%d] because, the transaction type is [%s]",
+				//				block.Header.Number, txIndex, txType)
+				continue
+			}
+
+			var txResult peer.TxValidationCode
+
+			// Get the readset
+			respPayload, err := putils.GetActionFromEnvelope(envBytes)
+			if err != nil {
+				txResult = peer.TxValidationCode_NIL_TXACTION
+			}
+			//preparation for extracting RWSet from transaction
+			txRWSet := &rwsetutil.TxRwSet{}
+			// Get the Result from the Action
+			// and then Unmarshal it into a TxReadWriteSet using custom unmarshalling
+			if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
+				txResult = peer.TxValidationCode_INVALID_OTHER_REASON
+			}
+
+			txsFilter.SetFlag(txIndex, txResult)
+
+			//txRWSet != nil => t is valid
+			if txRWSet != nil {
+				for _, nsRWSet := range txRWSet.NsRwSets {
+					for _, kvRead := range nsRWSet.KvRwSet.Reads {
+						totalReadSet = append(totalReadSet, &statedb.CompositeKey{
+							Namespace: nsRWSet.NameSpace,
+							Key:       kvRead.Key,
+						})
+					}
+				}
+			}
+
+		}
 		block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
 	}
 
-	var totalReadSet []*statedb.CompositeKey
-
-	for txIndex, envBytes := range block.Data.Data {
-		if txsFilter.IsInvalid(txIndex) {
-			// Skiping invalid transaction
-			logger.Warningf("Block [%d] Transaction index [%d] marked as invalid by committer. Reason code [%d]",
-				block.Header.Number, txIndex, txsFilter.Flag(txIndex))
-			continue
-		}
-
-		env, err := putils.GetEnvelopeFromBlock(envBytes)
-		if err != nil {
-			return err
-		}
-
-		payload, err := putils.GetPayload(env)
-		if err != nil {
-			return err
-		}
-
-		chdr, err := putils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
-		if err != nil {
-			return err
-		}
-
-		txType := common.HeaderType(chdr.Type)
-
-		if txType != common.HeaderType_ENDORSER_TRANSACTION {
-			//			logger.Debugf("Skipping mvcc validation for Block [%d] Transaction index [%d] because, the transaction type is [%s]",
-			//				block.Header.Number, txIndex, txType)
-			continue
-		}
-
-		var txResult peer.TxValidationCode
-
-		// Get the readset
-		respPayload, err := putils.GetActionFromEnvelope(envBytes)
-		if err != nil {
-			txResult = peer.TxValidationCode_NIL_TXACTION
-		}
-		//preparation for extracting RWSet from transaction
-		txRWSet := &rwsetutil.TxRwSet{}
-		// Get the Result from the Action
-		// and then Unmarshal it into a TxReadWriteSet using custom unmarshalling
-		if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
-			txResult = peer.TxValidationCode_INVALID_OTHER_REASON
-		}
-
-		txsFilter.SetFlag(txIndex, txResult)
-
-		//txRWSet != nil => t is valid
-		if txRWSet != nil {
-			for _, nsRWSet := range txRWSet.NsRwSets {
-				for _, kvRead := range nsRWSet.KvRwSet.Reads {
-					totalReadSet = append(totalReadSet, &statedb.CompositeKey{
-						Namespace: nsRWSet.NameSpace,
-						Key:       kvRead.Key,
-					})
-				}
-			}
-		}
-
-	}
-
 	bulkOptimizable.LoadCommittedVersions(totalReadSet)
-	block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
 	return nil
 }
 
@@ -168,7 +170,9 @@ func (v *Validator) collectRSetForBlockForBulkOptimizable(block *common.Block) e
 func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidation bool) (*statedb.UpdateBatch, error) {
 	startTime := time.Now()
 	state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatch start\n", startTime))
-	defer state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatch end %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
+	defer func(startTime time.Time) {
+		state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatch end %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds()))
+	}(startTime)
 
 	logger.Debugf("New block arrived for validation:%#v, doMVCCValidation=%t", block, doMVCCValidation)
 	updates := statedb.NewUpdateBatch()
@@ -183,7 +187,7 @@ func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidatio
 		block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
 	}
 
-	v.collectRSetForBlockForBulkOptimizable(block)
+	v.collectRSetForBlockForBulkOptimizable([]*common.Block{block})
 
 	for txIndex, envBytes := range block.Data.Data {
 		if txsFilter.IsInvalid(txIndex) {
@@ -247,6 +251,106 @@ func (v *Validator) ValidateAndPrepareBatch(block *common.Block, doMVCCValidatio
 	}
 	block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
 	return updates, nil
+}
+
+// ValidateAndPrepareBatchBulk implements method in Validator interface
+func (v *Validator) ValidateAndPrepareBatchBulk(blocks []*common.Block, doMVCCValidation bool) (*statedb.UpdateBatch, []error) {
+	startTime := time.Now()
+	errs := make([]error, len(blocks))
+
+	state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatchBulk start len %d\n", startTime, len(blocks)))
+	defer func(startTime time.Time) {
+		state_based_validator_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBatchBulk end %d len %d\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), len(blocks)))
+	}(startTime)
+
+	sTime := time.Now()
+	v.collectRSetForBlockForBulkOptimizable(blocks)
+	state_based_validator_log.WriteString(fmt.Sprintf("%s CollectRSet done %d\n", time.Now(), time.Now().Sub(sTime)))
+	updates := statedb.NewUpdateBatch()
+
+	for i, block := range blocks {
+		logger.Debugf("New block arrived for validation:%#v, doMVCCValidation=%t", block, doMVCCValidation)
+		logger.Debugf("Validating a block with [%d] transactions", len(block.Data.Data))
+
+		// Committer validator has already set validation flags based on well formed tran checks
+		txsFilter := util.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+
+		// Precaution in case committer validator has not added validation flags yet
+		if len(txsFilter) == 0 {
+			txsFilter = util.NewTxValidationFlags(len(block.Data.Data))
+			block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+		}
+
+		for txIndex, envBytes := range block.Data.Data {
+			if txsFilter.IsInvalid(txIndex) {
+				// Skiping invalid transaction
+				logger.Warningf("Block [%d] Transaction index [%d] marked as invalid by committer. Reason code [%d]",
+					block.Header.Number, txIndex, txsFilter.Flag(txIndex))
+				continue
+			}
+
+			sTime := time.Now()
+			env, err := putils.GetEnvelopeFromBlock(envBytes)
+			state_based_validator_log.WriteString(fmt.Sprintf("%s GetEnvelopeFromBlock done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+			if err != nil {
+				errs[i] = err
+				break // mark the block invalid and continue validating other blocks
+			}
+
+			payload, err := putils.GetPayload(env)
+			if err != nil {
+				errs[i] = err
+				break // mark the block invalid and continue validating other blocks
+			}
+
+			chdr, err := putils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
+			if err != nil {
+				errs[i] = err
+				break // mark the block invalid and continue validating other blocks
+			}
+
+			txType := common.HeaderType(chdr.Type)
+
+			if txType != common.HeaderType_ENDORSER_TRANSACTION {
+				logger.Debugf("Skipping mvcc validation for Block [%d] Transaction index [%d] because, the transaction type is [%s]",
+					block.Header.Number, txIndex, txType)
+				continue
+			}
+
+			sTime = time.Now()
+			txRWSet, txResult, err := v.validateEndorserTX(envBytes, doMVCCValidation, updates)
+			state_based_validator_log.WriteString(fmt.Sprintf("%s validateEndorserTX done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+
+			if err != nil {
+				errs[i] = err
+				break // mark the block invalid and continue validating other blocks
+			}
+
+			txsFilter.SetFlag(txIndex, txResult)
+
+			//txRWSet != nil => t is valid
+			if txRWSet != nil {
+				committingTxHeight := version.NewHeight(block.Header.Number, uint64(txIndex))
+				sTime = time.Now()
+				addWriteSetToBatch(txRWSet, committingTxHeight, updates)
+				state_based_validator_log.WriteString(fmt.Sprintf("%s addWriteSetToBatch done %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+				txsFilter.SetFlag(txIndex, peer.TxValidationCode_VALID)
+			}
+
+			if txsFilter.IsValid(txIndex) {
+				logger.Debugf("Block [%d] Transaction index [%d] TxId [%s] marked as valid by state validator",
+					block.Header.Number, txIndex, chdr.TxId)
+			} else {
+				logger.Warningf("Block [%d] Transaction index [%d] TxId [%s] marked as invalid by state validator. Reason code [%d]",
+					block.Header.Number, txIndex, chdr.TxId, txsFilter.Flag(txIndex))
+			}
+		}
+
+		// if the block is invalid, it'll be ignored by the caller
+		block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+	}
+
+	return updates, errs
 }
 
 func addWriteSetToBatch(txRWSet *rwsetutil.TxRwSet, txHeight *version.Height, batch *statedb.UpdateBatch) {

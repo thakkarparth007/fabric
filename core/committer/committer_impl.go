@@ -110,6 +110,37 @@ func (lc *LedgerCommitter) Commit(block *common.Block) error {
 	return nil
 }
 
+// CommitBulk commits an array of vscc-validated blocks in one-go to the ledger
+// Note, it is important that this always be called serially
+func (lc *LedgerCommitter) CommitBulk(blocks []*common.Block) []error {
+	for _, block := range blocks {
+		// Config blocks should never be committed in bulk.
+		if utils.IsConfigBlock(block) && len(blocks) != 1 {
+			return []error{fmt.Errorf("Unexpected Config block passed to CommitBulk. Len of blocks: %d", len(blocks))}
+		}
+
+	}
+
+	startTime := time.Now()
+	committer_log.WriteString(fmt.Sprintf("%s CommitBulk started %d blocks\n", time.Now(), len(blocks)))
+	errs := lc.ledger.CommitBulk(blocks)
+
+	failCount := 0
+	for i, err := range errs {
+		if err != nil {
+			failCount++
+		} else {
+			if err = producer.SendProducerBlockEvent(blocks[i]); err != nil {
+				logger.Errorf("CommitBulk: Error publishing block %d, because: %v", blocks[i].Header.Number, err)
+			}
+		}
+	}
+
+	committer_log.WriteString(fmt.Sprintf("%s CommitBulk ended in %d with %d fail\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), failCount))
+
+	return nil
+}
+
 // LedgerHeight returns recently committed block sequence number
 func (lc *LedgerCommitter) LedgerHeight() (uint64, error) {
 	var info *common.BlockchainInfo

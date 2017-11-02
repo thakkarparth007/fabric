@@ -27,6 +27,7 @@ type TxMgr interface {
 	NewQueryExecutor() (ledger.QueryExecutor, error)
 	NewTxSimulator() (ledger.TxSimulator, error)
 	ValidateAndPrepare(block *common.Block, doMVCCValidation bool) error
+	ValidateAndPrepareBulk(blocks []*common.Block, doMVCCValidation bool) []error
 	GetLastSavepoint() (*version.Height, error)
 	ShouldRecover(lastAvailableBlock uint64) (bool, uint64, error)
 	CommitLostBlock(block *common.Block) error

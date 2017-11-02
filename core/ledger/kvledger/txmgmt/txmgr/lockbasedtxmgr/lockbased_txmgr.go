@@ -112,6 +112,23 @@ func (txmgr *LockBasedTxMgr) ValidateAndPrepare(block *common.Block, doMVCCValid
 	return err
 }
 
+// ValidateAndPrepareBulk implements method in interface `txmgmt.TxMgr`
+func (txmgr *LockBasedTxMgr) ValidateAndPrepareBulk(blocks []*common.Block, doMVCCValidation bool) []error {
+	logger.Debugf("Bulk Validating [%d] blocks", len(blocks))
+	batch, errs := txmgr.validator.ValidateAndPrepareBatchBulk(blocks, doMVCCValidation)
+
+	lastValidBlockIdx := 0
+	for i, err := range errs {
+		if err == nil {
+			lastValidBlockIdx = i
+		}
+	}
+	txmgr.currentBlock = blocks[lastValidBlockIdx]
+	txmgr.batch = batch
+
+	return errs
+}
+
 // Shutdown implements method in interface `txmgmt.TxMgr`
 func (txmgr *LockBasedTxMgr) Shutdown() {
 	txmgr.db.Close()
