@@ -30,6 +30,9 @@ type Committer interface {
 	// Commit block to the ledger
 	Commit(block *common.Block) error
 
+	// CommitBulk commits blocks in bulk to ledger
+	CommitBulk(blocks []*common.Block) []error
+
 	// Get recent block sequence number
 	LedgerHeight() (uint64, error)
 

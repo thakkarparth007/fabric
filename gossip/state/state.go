@@ -680,15 +680,32 @@ func (s *GossipStateProviderImpl) validateBlockAndPushForCommit(block *common.Bl
 func (s *GossipStateProviderImpl) startCommitHandler() {
 	for {
 		commit_pipeline_log.WriteString(fmt.Sprintf("Time: %+v CommitQueueLen %d\n", time.Now(), len(s.commitQueue)))
-		block := <-s.commitQueue
+		blocks := make([]*common.Block, 1)
 
-		if err := s.committer.Commit(block); err != nil {
-			logger.Errorf("Got error while committing(%s)", err)
-			//return err
+		// read all existing blocks, with a cap - just being paranoid
+		for i := 0; i < cap(s.commitQueue); i++ {
+			select {
+			case block := <-s.commitQueue:
+				blocks = append(blocks, block)
+			default:
+				break
+			}
 		}
 
+		errs := s.committer.CommitBulk(blocks)
+		lastValidBlockIdx := 0
+		for i, err := range errs {
+			if err != nil {
+				logger.Errorf("Got error while committing(%s)", err)
+				//return err
+			} else {
+				lastValidBlockIdx = i
+			}
+		}
+
+		lastValidBlock := blocks[lastValidBlockIdx]
 		// Update ledger level within node metadata
-		nodeMetastate := NewNodeMetastate(block.Header.Number)
+		nodeMetastate := NewNodeMetastate(lastValidBlock.Header.Number)
 		// Decode nodeMetastate to byte array
 		b, err := nodeMetastate.Bytes()
 		if err == nil {
@@ -698,7 +715,7 @@ func (s *GossipStateProviderImpl) startCommitHandler() {
 		}
 
 		logger.Debugf("Channel [%s]: Created block [%d] with %d transaction(s)",
-			s.chainID, block.Header.Number, len(block.Data.Data))
+			s.chainID, lastValidBlock.Header.Number, len(lastValidBlock.Data.Data))
 
 		//return nil
 	}

@@ -255,6 +255,82 @@ func (l *kvLedger) Commit(block *common.Block) error {
 	return nil
 }
 
+// Commit commits the valid block (returned in the method RemoveInvalidTransactionsAndPrepare) and related state changes
+func (l *kvLedger) CommitBulk(blocks []*common.Block) []error {
+	kvledger_log.WriteString(fmt.Sprintf("%s LedgerCommitBulk started %d blocks\n", time.Now(), len(blocks)))
+
+	errs := make([]error, len(blocks))
+
+	realStartTime := time.Now()
+	errs = l.txtmgmt.ValidateAndPrepareBulk(blocks, true)
+	kvledger_log.WriteString(fmt.Sprintf("%s ValidateAndPrepareBulk done %d\n", time.Now(), time.Now().Sub(realStartTime).Nanoseconds()))
+	failCount := 0
+
+	for i, block := range blocks {
+		err := errs[i]
+		blockNo := block.Header.Number
+
+		if err != nil {
+			logger.Debugf("Channel [%s]: Block [%d] is invalid", l.ledgerID, blockNo)
+			failCount++
+			continue
+		} else {
+			logger.Debugf("Channel [%s]: Block [%d] is valid", l.ledgerID, blockNo)
+		}
+
+		logger.Debugf("Channel [%s]: Committing block [%d] to storage", l.ledgerID, blockNo)
+		startTime := time.Now()
+		if err = l.blockStore.AddBlock(block); err != nil {
+			/*
+				'continue' here is incorrect behavior. Since we are here,
+				it means, err[i] was nil earlier. Which means that the RWset
+				of this particular block has been added to the batch.
+				If we continue here, then that batch will be later committed
+				(outside this loop).
+
+				Since disk failure won't happen often, especially for single blocks
+				we can actually fail all the blocks in this call.
+
+				The only thing to be done here is to panic.
+			*/
+			panic(fmt.Errorf(`Error during adding block to disk :%s`, err))
+		}
+		kvledger_log.WriteString(fmt.Sprintf("%s AddBlock done (disk) %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
+		logger.Infof("Channel [%s]: Created block [%d] with %d transaction(s)", l.ledgerID, block.Header.Number, len(block.Data.Data))
+	}
+
+	historyChan := make(chan struct{})
+	go func() {
+		for _, block := range blocks {
+			// History database could be written in parallel with state and/or async as a future optimization
+			if ledgerconfig.IsHistoryDBEnabled() {
+				blockNo := block.Header.Number
+				logger.Debugf("Channel [%s]: Committing block [%d] transactions to history database", l.ledgerID, blockNo)
+				startTime := time.Now()
+				err := l.historyDB.Commit(block)
+				kvledger_log.WriteString(fmt.Sprintf("%s HistoryDB.Commit() done %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
+				if err != nil {
+					panic(fmt.Errorf(`Error during commit to history db:%s`, err))
+				}
+			}
+		}
+		historyChan <- struct{}{}
+	}()
+
+	logger.Debugf("Channel [%s]: Committing %d blocks' transactions to state database", l.ledgerID, len(blocks))
+	startTime := time.Now()
+	err := l.txtmgmt.Commit()
+	kvledger_log.WriteString(fmt.Sprintf("%s StateDB.Commit() done %d %+v\n", time.Now(), time.Now().Sub(startTime).Nanoseconds(), err))
+	if err != nil {
+		panic(fmt.Errorf(`Error during commit to txmgr:%s`, err))
+	}
+
+	kvledger_log.WriteString(fmt.Sprintf("%s LedgerCommitBulk done %d with %d fail\n", time.Now(), time.Now().Sub(realStartTime).Nanoseconds(), failCount))
+
+	<-historyChan
+	return errs
+}
+
 // Close closes `KVLedger`
 func (l *kvLedger) Close() {
 	l.blockStore.Shutdown()

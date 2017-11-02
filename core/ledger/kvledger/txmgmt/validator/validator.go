@@ -24,4 +24,5 @@ import (
 // Validator validates a rwset
 type Validator interface {
 	ValidateAndPrepareBatch(block *common.Block, doMVCCValidation bool) (*statedb.UpdateBatch, error)
+	ValidateAndPrepareBatchBulk(blocks []*common.Block, doMVCCValidation bool) (*statedb.UpdateBatch, []error)
 }
