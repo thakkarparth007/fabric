@@ -22,6 +22,7 @@ import (
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
@@ -177,6 +178,11 @@ func (vdb *versionedDB) GetLatestSavePoint() (*version.Height, error) {
 	}
 	version, _ := version.NewHeightFromBytes(versionBytes)
 	return version, nil
+}
+
+// AddSimulatedTxRwSetToValidationCache does nothing here
+func (vdb *versionedDB) AddSimulatedTxRwSetToValidationCache(txRwSet *rwsetutil.TxRwSet) {
+	// do nothing
 }
 
 func constructCompositeKey(ns string, key string) []byte {

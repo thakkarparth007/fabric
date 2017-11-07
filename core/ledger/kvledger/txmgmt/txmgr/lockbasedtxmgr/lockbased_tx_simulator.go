@@ -74,7 +74,9 @@ func (s *lockBasedTxSimulator) GetTxSimulationResults() ([]byte, error) {
 	if s.helper.err != nil {
 		return nil, s.helper.err
 	}
-	return s.rwsetBuilder.GetTxReadWriteSet().ToProtoBytes()
+	txRwSet := s.rwsetBuilder.GetTxReadWriteSet()
+	s.helper.txmgr.db.AddSimulatedTxRwSetToValidationCache(txRwSet)
+	return txRwSet.ToProtoBytes()
 }
 
 // ExecuteUpdate implements method in interface `ledger.TxSimulator`

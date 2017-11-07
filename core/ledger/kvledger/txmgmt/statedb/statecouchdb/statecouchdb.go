@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
@@ -54,6 +55,10 @@ type VersionedDBProvider struct {
 
 //CommittedVersions contains maps of committedVersions and revisionNumbers
 type CommittedVersions struct {
+	recentlyReadVersions struct {
+		sync.RWMutex
+		m map[statedb.CompositeKey]*version.Height
+	}
 	committedVersions map[statedb.CompositeKey]*version.Height
 	revisionNumbers   map[statedb.CompositeKey]string
 }
@@ -109,8 +114,15 @@ func newVersionedDB(couchInstance *couchdb.CouchInstance, dbName string) (*Versi
 	}
 	versionMap := make(map[statedb.CompositeKey]*version.Height)
 	revMap := make(map[statedb.CompositeKey]string)
+	recentlyReadVersionsMap := make(map[statedb.CompositeKey]*version.Height)
 
-	committedData := &CommittedVersions{committedVersions: versionMap, revisionNumbers: revMap}
+	committedData := &CommittedVersions{
+		committedVersions: versionMap,
+		revisionNumbers:   revMap,
+		recentlyReadVersions: struct {
+			sync.RWMutex
+			m map[statedb.CompositeKey]*version.Height
+		}{m: recentlyReadVersionsMap}}
 
 	return &VersionedDB{db, dbName, committedData}, nil
 }
@@ -154,12 +166,40 @@ func (vdb *VersionedDB) GetState(namespace string, key string) (*statedb.Version
 	return &statedb.VersionedValue{Value: returnValue, Version: &returnVersion}, nil
 }
 
+// AddSimulatedTxRwSetToValidationCache adds a TxRwSet's read values to the versions-cache
+func (vdb *VersionedDB) AddSimulatedTxRwSetToValidationCache(txRwSet *rwsetutil.TxRwSet) {
+	vdb.committedData.recentlyReadVersions.Lock()
+	defer vdb.committedData.recentlyReadVersions.Unlock()
+
+	for _, nsRWSet := range txRwSet.NsRwSets {
+		ns := nsRWSet.NameSpace
+		kvReads := nsRWSet.KvRwSet.Reads
+		// rangeQueries := nsRWSet.KvRwSet.RangeQueriesInfo
+
+		for _, kvRead := range kvReads {
+			compositeKey := statedb.CompositeKey{Namespace: ns, Key: kvRead.Key}
+			vdb.committedData.recentlyReadVersions.m[compositeKey] = rwsetutil.NewVersion(kvRead.Version)
+		}
+
+		// Not doing anything for rangeQueries
+	}
+
+}
+
 // GetVersion implements method in VersionedDB interface
 func (vdb *VersionedDB) GetVersion(namespace string, key string) (*version.Height, error) {
 
 	compositeKey := statedb.CompositeKey{Namespace: namespace, Key: key}
 
-	returnVersion, keyFound := vdb.committedData.committedVersions[compositeKey]
+	vdb.committedData.recentlyReadVersions.RLock()
+	returnVersion, keyFound := vdb.committedData.recentlyReadVersions.m[compositeKey]
+	if keyFound {
+		vdb.committedData.recentlyReadVersions.RUnlock()
+		return returnVersion, nil
+	}
+	vdb.committedData.recentlyReadVersions.RUnlock()
+
+	returnVersion, keyFound = vdb.committedData.committedVersions[compositeKey]
 
 	if !keyFound {
 
@@ -309,7 +349,7 @@ func (vdb *VersionedDB) ExecuteQuery(namespace, query string) (statedb.ResultsIt
 func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version.Height) error {
 
 	//Clear the version cache
-	defer vdb.ClearCachedVersions()
+	// defer vdb.ClearCachedVersions()
 
 	//initialize a missing key list
 	missingKeys := []*statedb.CompositeKey{}
@@ -323,7 +363,7 @@ func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 	namespaces := batch.GetUpdatedNamespaces()
 	for _, ns := range namespaces {
 		updates := batch.GetUpdates(ns)
-		for k := range updates {
+		for k, vv := range updates {
 			compositeKey := statedb.CompositeKey{Namespace: ns, Key: k}
 
 			//check the cache to see if the key is missing
@@ -334,6 +374,14 @@ func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 				missingKeys = append(missingKeys, &compositeKey)
 
 			}
+
+			vdb.committedData.recentlyReadVersions.Lock()
+			if vv.Value == nil {
+				delete(vdb.committedData.recentlyReadVersions.m, compositeKey)
+			} else {
+				vdb.committedData.recentlyReadVersions.m[compositeKey] = vv.Version
+			}
+			vdb.committedData.recentlyReadVersions.Unlock()
 		}
 	}
 
@@ -452,17 +500,24 @@ func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) {
 	keymap := []string{}
 	for _, key := range keys {
 
-		//create composite key for couchdb
-		compositeDBKey := constructCompositeKey(key.Namespace, key.Key)
-		//add the composite key to the list of required keys
-		keymap = append(keymap, string(compositeDBKey))
-
 		compositeKey := statedb.CompositeKey{Namespace: key.Namespace, Key: key.Key}
 
-		//initialize empty values for each key
-		versionMap[compositeKey] = nil
-		revMap[compositeKey] = ""
+		vdb.committedData.recentlyReadVersions.RLock()
+		version := vdb.committedData.recentlyReadVersions.m[compositeKey]
+		vdb.committedData.recentlyReadVersions.RUnlock()
 
+		// Fetch data only if not in recentlyRead
+		if version == nil {
+			//initialize empty values for each key
+			versionMap[compositeKey] = nil
+			revMap[compositeKey] = ""
+
+			//create composite key for couchdb
+			compositeDBKey := constructCompositeKey(key.Namespace, key.Key)
+			//add the composite key to the list of required keys
+			keymap = append(keymap, string(compositeDBKey))
+
+		}
 	}
 
 	idVersions, _ := vdb.db.BatchRetrieveIDRevision(keymap)

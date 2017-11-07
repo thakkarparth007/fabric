@@ -19,6 +19,7 @@ package statedb
 import (
 	"sort"
 
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/util"
 )
@@ -60,6 +61,8 @@ type VersionedDB interface {
 	Open() error
 	// Close closes the db
 	Close()
+	// Adds TxRwSet to cache - to be used during commit time for ValidateAndPrepare
+	AddSimulatedTxRwSetToValidationCache(txRwSet *rwsetutil.TxRwSet)
 }
 
 //BulkOptimizable interface provides additional functions for
