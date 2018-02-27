@@ -17,7 +17,9 @@ limitations under the License.
 package state
 
 import (
+	"os"
 	"fmt"
+	"time"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -26,6 +28,8 @@ import (
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/op/go-logging"
 )
+
+var gossip_log, _ = os.Create("/root/gossip.log")
 
 // PayloadsBuffer is used to store payloads into which used to
 // support payloads with blocks reordering according to the
@@ -85,16 +89,30 @@ func (b *PayloadsBufferImpl) Ready() chan struct{} {
 // Push new payload into the buffer structure in case new arrived payload
 // sequence number is below the expected next block number payload will be
 // thrown away and error will be returned.
+var lastRcvTime = time.Now()
+var isFirstRcv = true
+
 func (b *PayloadsBufferImpl) Push(payload *proto.Payload) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
 	seqNum := payload.SeqNum
+	
+	now := time.Now()
+	diff := lastRcvTime.Sub(now).Nanoseconds()
+	if isFirstRcv {
+		diff = 0
+	}
+	isFirstRcv = false
+	lastRcvTime = now
 
 	if seqNum < b.next || b.buf[seqNum] != nil {
+		gossip_log.WriteString(fmt.Sprintf("[%s] Received block #%d. Discarded. TimeSincePrevBlock: %d ns", time.Now(), seqNum, diff))
 		return fmt.Errorf("Payload with sequence number = %s has been already processed",
 			strconv.FormatUint(payload.SeqNum, 10))
 	}
+	
+	gossip_log.WriteString(fmt.Sprintf("[%s] Received block #%d. Accepted. TimeSincePrevBlock: %d ns", time.Now(), seqNum, diff))
 
 	b.buf[seqNum] = payload
 
