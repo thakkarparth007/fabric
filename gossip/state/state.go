@@ -459,7 +459,7 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 				logger.Debug("New block with claimed sequence number ", payload.SeqNum, " transactions num ", len(rawBlock.Data.Data))
 				sTime := time.Now()
 				s.commitBlock(rawBlock)
-				gossip_state_log.WriteString(fmt.Sprintf("%s Commit duration %d\n", time.Now(), time.Now().Sub(sTime).Nanoseconds()))
+				gossip_state_log.WriteString(fmt.Sprintf("%s Commit duration %d [BlockId: %d]\n", time.Now(), time.Now().Sub(sTime).Nanoseconds(), payload.SeqNum))
 			}
 			gossip_state_log.WriteString(fmt.Sprintf("%s Loop over %d\n", time.Now(), time.Now().Sub(consumeTime).Nanoseconds()))
 		case <-s.stopCh:
