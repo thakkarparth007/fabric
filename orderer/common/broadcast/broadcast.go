@@ -32,7 +32,7 @@ import (
 )
 
 var logger = logging.MustGetLogger("orderer/common/broadcast")
-var f, _ = os.Create("broadcast.EnqueDelay.log")
+var f, _ = os.Create("/root/broadcast.EnqueDelay.log")
 
 // ConfigUpdateProcessor is used to transform CONFIG_UPDATE transactions which are used to generate other envelope
 // message types with preprocessing by the orderer
@@ -143,9 +143,9 @@ func (bh *handlerImpl) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 
 		// Normal transaction for existing chain
 		myt := time.Now()
-		fmt.Fprintf(f, "%s BEFORE support.Filters().Apply(msg)\n", myt)
+		fmt.Fprintf(f, "%s [ch.id: %s] BEFORE support.Filters().Apply(msg)\n", myt, chdr.ChannelId)
 		_, filterErr := support.Filters().Apply(msg)
-		fmt.Fprintf(f, "%s AFTER support.Filters().Apply(msg). DIFF: %s\n", time.Now(), time.Now().Sub(myt))
+		fmt.Fprintf(f, "%s [ch.id: %s] AFTER support.Filters().Apply(msg). DIFF: %s\n", time.Now(), chdr.ChannelId, time.Now().Sub(myt))
 
 		if filterErr != nil {
 			logger.Warningf("[channel: %s] Rejecting broadcast message because of filter error: %s", chdr.ChannelId, filterErr)
@@ -153,9 +153,9 @@ func (bh *handlerImpl) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 		}
 
 		myt = time.Now()
-		fmt.Fprintf(f, "%s BEFORE support.Enqueue(msg)\n", myt)
+		fmt.Fprintf(f, "%s [ch.id: %s] BEFORE support.Enqueue(msg)\n", myt, chdr.ChannelId)
 		success := support.Enqueue(msg)
-		fmt.Fprintf(f, "%s AFTER support.Enqueue(msg). DIFF: %s\n", time.Now(), time.Now().Sub(myt))
+		fmt.Fprintf(f, "%s [ch.id: %s] AFTER support.Enqueue(msg). DIFF: %s\n", time.Now(), chdr.ChannelId, time.Now().Sub(myt))
 		if !success {
 			logger.Infof("Consenter instructed us to shut down")
 			return srv.Send(&ab.BroadcastResponse{Status: cb.Status_SERVICE_UNAVAILABLE})
