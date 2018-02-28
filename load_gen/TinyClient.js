@@ -59,7 +59,7 @@ class TinyClient {
         options: {
             channelName
             peerName
-            ordererName
+            ordererUrl
             ORGS
             endorserOrgs
             chaincodeId
@@ -84,7 +84,7 @@ class TinyClient {
         }));
         this.client.setCryptoSuite(cryptoSuite);
         
-        this.chain.addOrderer(this.client.newOrderer(this.ORGS[options.ordererName].url, {})); 
+        this.chain.addOrderer(this.client.newOrderer(options.ordererUrl, {})); 
         
         this.stats = {
             numTxPropSubmitted : 0,
