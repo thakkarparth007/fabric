@@ -31,6 +31,7 @@ const orgs = Object.keys(ORGS).filter(k => k.indexOf("org") === 0);
 const numPeers = Object.keys(ORGS.org1).filter(k => k.indexOf("peer") === 0).length;
 const channels = config.channels.split(",");
 const numChannels = channels.length;
+const numOrderers = config.orderers.length;
 const invokeDelayMs = 1000 / config.numLocalRequestsPerSec;
 
 //Client.setConfigSetting('request-timeout', requestTimeout);
@@ -107,8 +108,8 @@ function startWorkers(loadInstance) {
     const broadQueueLenFile = fs.createWriteStream('broadQueueLen.txt');
     const commitQueueLenFile = fs.createWriteStream('commitQueueLen.txt');
 
-    for(let i = 0, peerId = 0, orgId = 0, chanId = 0; i < config.numProcesses; i++) {
-        console.log(`Alloting (PeerId=${peerId}) to worker#${i}`);
+    for(let i = 0, peerId = 0, orgId = 0, chanId = 0, ordererId = 0; i < config.numProcesses; i++) {
+        console.log(`Alloting (PeerId=${peerId}, OrdererId=${ordererId}) to worker#${i}`);
         let endorserOrgs = [];
         for(let j = 0; j < endorsementPolicy; j++) {
             endorserOrgs.push(orgs[(orgId+j)%orgs.length]);
@@ -118,7 +119,7 @@ function startWorkers(loadInstance) {
             seed: globalSeed*(i+1),
             peerName: 'peer' + (peerId),
             orgName: endorserOrgs[0],
-        ordererName: 'orderer',
+        ordererUrl: config.orderers[ordererId],
             endorserOrgs: endorserOrgs,
             numPeers: numPeers,
             numClients: config.numClientsPerProcess,
@@ -181,6 +182,7 @@ function startWorkers(loadInstance) {
         peerId = (peerId+1) % numPeers;
         orgId = (orgId+1) % orgs.length;
         chanId = (chanId+1) % numChannels;
+        ordererId = (ordererId+1) % numOrderers;
     } 
 }
 
@@ -245,8 +247,8 @@ function parallelBootstrapMaster(loadInstance) {
 
     let pendingClientReadies = config[load.getName()].numBootstrapProcesses*config[load.getName()].numBootstrapClientsPerProcess;
 
-    for(let i = 0, peerId = 0, orgId = 0, chanId = 0; i < config[load.getName()].numBootstrapProcesses; i++) {
-        console.log(`Alloting (PeerId=${peerId}) to worker#${i}`);
+    for(let i = 0, peerId = 0, orgId = 0, chanId = 0, ordererId = 0; i < config[load.getName()].numBootstrapProcesses; i++) {
+        console.log(`Alloting (PeerId=${peerId}, OrdererId=${ordererId}) to worker#${i}`);
         let endorserOrgs = [];
         for(let j = 0; j < endorsementPolicy; j++) {
             endorserOrgs.push(orgs[(orgId+j)%orgs.length]);
@@ -256,7 +258,7 @@ function parallelBootstrapMaster(loadInstance) {
             seed: globalSeed*(i+1),
             peerName: 'peer' + (peerId),
             orgName: endorserOrgs[0],
-        ordererName: 'orderer',
+        ordererUrl: config.orderers[ordererId],
             endorserOrgs: endorserOrgs,
             numPeers: numPeers,
             numClients: config[load.getName()].numBootstrapClientsPerProcess,
@@ -276,6 +278,7 @@ function parallelBootstrapMaster(loadInstance) {
         peerId = (peerId+1) % numPeers;
         orgId = (orgId+1) % orgs.length;
         chanId = (chanId+1) % numChannels;
+        ordererId = (ordererId+1)%numOrderers;
     } 
 
     return promise;
@@ -325,7 +328,7 @@ function initWorker() {
         let client = new TinyClient({
             channelName: process.env.channelName,
             peerName: process.env.peerName,
-            ordererName: process.env.ordererName,
+            ordererUrl: process.env.ordererUrl,
             ORGS: ORGS,
             endorserOrgs: process.env.endorserOrgs,
             chaincodeId: chaincodeId,
