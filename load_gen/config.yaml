@@ -61,8 +61,10 @@ readWriteWorkload:
 
 ## Network specification - same format as that in fabric-sdk-node/test/integration/e2e/config.json
 network:
-        orderer:
-            url: grpc://orderer0:7050
+        orderers:
+            - grpc://orderer0:7050
+            # - grpc://orderer1:7050 ... 
+            
             #server-hostname: orderer.example.com
             #tls_cacerts: ./fixtures/channel/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/cacerts/example.com-cert.pem
  
